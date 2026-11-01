@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import logging
 from typing import List, Optional, Tuple
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.ml import service as ml_service
 from app.ml.service import MLInferenceResult
@@ -148,8 +148,13 @@ def create_reading_with_assessment(
 
 
 def get_latest_reading(db: Session) -> Optional[WaterReading]:
-    """Retrieve the most recent water reading."""
-    return db.query(WaterReading).order_by(WaterReading.timestamp.desc(), WaterReading.id.desc()).first()
+    """Retrieve the most recent water reading with assessment eagerly loaded."""
+    return (
+        db.query(WaterReading)
+        .options(joinedload(WaterReading.assessment))
+        .order_by(WaterReading.timestamp.desc(), WaterReading.id.desc())
+        .first()
+    )
 
 
 def get_readings_history(
@@ -160,9 +165,9 @@ def get_readings_history(
 ) -> List[WaterReading]:
     """
     Retrieve historical water readings ordered newest first.
-    Optionally filter by start and end timestamps.
+    Eagerly loads the assessment relationship via a single SQL JOIN (no N+1).
     """
-    query = db.query(WaterReading)
+    query = db.query(WaterReading).options(joinedload(WaterReading.assessment))
 
     if start_date:
         query = query.filter(WaterReading.timestamp >= start_date)
