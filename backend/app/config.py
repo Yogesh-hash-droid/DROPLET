@@ -67,8 +67,11 @@ class Settings(BaseSettings):
     @property
     def sqlalchemy_connect_args(self) -> dict:
         """Return SQLAlchemy driver arguments, including verified MySQL TLS."""
+        if self.DATABASE_URL and self.DATABASE_URL.startswith("sqlite"):
+            return {"check_same_thread": False}
         if not self.MYSQL_SSL:
             return {}
+
 
         try:
             context = ssl.create_default_context(cafile=self.MYSQL_SSL_CA)
