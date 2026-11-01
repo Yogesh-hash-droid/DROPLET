@@ -38,13 +38,13 @@ export default function Dashboard({
     ? Math.max(0, Date.now() - (parseUtcDate(latest.timestamp)?.getTime() || 0))
     : Infinity
 
-  // ONLINE if server reports ONLINE, OR if we received a reading within 5 seconds
+  // ONLINE if server reports ONLINE, OR if we received a reading within 15 seconds
   // (SSE-pushed data means the sensor is actively sending)
-  const isOnline = device?.status === 'ONLINE' || latestAgeMs <= 5000
+  const isOnline = device?.status === 'ONLINE' || latestAgeMs <= 15000
   const effectiveLastSeen = latest?.timestamp || device?.last_seen
 
-  // "No data" state: reading older than 5 seconds (sensor may have gone offline)
-  const isStale = latestAgeMs > 5000 && latest !== null
+  // "No data" state: reading older than 10 seconds (gives buffer for WiFi retransmission)
+  const isStale = latestAgeMs > 10000 && latest !== null
 
   return (
     <div className="page">
