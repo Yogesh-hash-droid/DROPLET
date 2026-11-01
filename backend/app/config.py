@@ -1,4 +1,5 @@
 import os
+import ssl
 from functools import lru_cache
 from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,6 +22,8 @@ class Settings(BaseSettings):
     MYSQL_USER: str = "root"
     MYSQL_PASSWORD: str = "root"
     MYSQL_DATABASE: str = "water_quality_db"
+    MYSQL_SSL: bool = False
+    MYSQL_SSL_CA: str | None = None
     DATABASE_URL: str | None = None
 
     MODEL_PATH: str = os.path.join(os.path.dirname(__file__), "..", "..", "ml", "models", "water_potability_model.joblib")
@@ -60,6 +63,22 @@ class Settings(BaseSettings):
         from urllib.parse import quote_plus
         encoded_pwd = quote_plus(self.MYSQL_PASSWORD)
         return f"mysql+pymysql://{self.MYSQL_USER}:{encoded_pwd}@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
+
+    @property
+    def sqlalchemy_connect_args(self) -> dict:
+        """Return SQLAlchemy driver arguments, including verified MySQL TLS."""
+        if not self.MYSQL_SSL:
+            return {}
+
+        try:
+            context = ssl.create_default_context(cafile=self.MYSQL_SSL_CA)
+        except (OSError, ssl.SSLError) as exc:
+            raise ValueError(
+                f"Unable to load MYSQL_SSL_CA certificate: {self.MYSQL_SSL_CA}"
+            ) from exc
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+        return {"ssl": context}
 
 
 @lru_cache()

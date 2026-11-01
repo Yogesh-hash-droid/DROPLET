@@ -1,11 +1,26 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.database import check_db_connection, SessionLocal
+from app.config import get_settings
 from app.models.water_reading import WaterReading
 from app.models.device import Device
 from app.models.prediction import Prediction
+
+if os.getenv("DROPLET_RUN_MYSQL_INTEGRATION") != "1":
+    pytest.skip(
+        "MySQL integration suite is opt-in; use the isolated backend suite by default",
+        allow_module_level=True,
+    )
+
+if get_settings().MYSQL_DATABASE != "water_quality_db_test":
+    pytest.skip(
+        "MySQL integration requires MYSQL_DATABASE=water_quality_db_test",
+        allow_module_level=True,
+    )
 
 # Clear any dependency overrides to test against real MySQL
 app.dependency_overrides.clear()

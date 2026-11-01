@@ -1,47 +1,88 @@
 """
 Phase 3 API Integration Tests: POST /api/readings with assessment + quality score.
 
-Tests run against the live MySQL database.
-Dependency overrides are cleared so real database interaction is confirmed.
+Tests run against an isolated in-memory database built from the current ORM
+metadata. MySQL connectivity is covered separately by the opt-in integration
+suite.
 
 PHASE 10 RETARGET (documented per plan section 9): the deterministic assessment
 is now the two-parameter Parameter Rule Check (TDS + turbidity only), so
 pH/temperature-driven expectations in tests B, C and F were rewritten; tests A,
-H, I and K gained additive Phase 10 contract assertions. These tests are BLOCKED
-until the separately approved database migration runs (they need the widened
-columns, the ESP8266 enum member and the score_method column).
+H, I and K gained additive Phase 10 contract assertions. The isolated database is created from the current ORM metadata, so these tests
+do not depend on a local or production MySQL schema.
 """
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.main import app
-from app.database import SessionLocal, check_db_connection
+from app.database import Base, get_db
 from app.models.water_reading import WaterReading
 from app.models.prediction import Prediction, SafetyStatus, ScoreMethod
 from app.security import require_admin_key
 
-# Ensure no overrides leak from unit tests
-app.dependency_overrides.clear()
 client = TestClient(app)
+TestingSessionLocal = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _isolated_database():
+    global TestingSessionLocal
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    TestingSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=engine
+    )
+
+    previous_db = app.dependency_overrides.get(get_db)
+    def override_get_db():
+        yield from _yield_session(TestingSessionLocal)
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    previous_auth = app.dependency_overrides.get(require_admin_key)
+    app.dependency_overrides[require_admin_key] = lambda: None
+    yield
+    if previous_db is None:
+        app.dependency_overrides.pop(get_db, None)
+    else:
+        app.dependency_overrides[get_db] = previous_db
+    if previous_auth is None:
+        app.dependency_overrides.pop(require_admin_key, None)
+    else:
+        app.dependency_overrides[require_admin_key] = previous_auth
+    engine.dispose()
+
+
+def _yield_session(session_factory):
+    session = session_factory()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def test_isolated_database_is_available():
+    assert TestingSessionLocal is not None
+    with TestingSessionLocal() as db:
+        assert db.execute(text("SELECT 1")).scalar_one() == 1
 
 
 @pytest.fixture(autouse=True)
 def _allow_config_updates_without_admin_key():
     """P2: PUT /api/config requires X-Admin-Key.
 
-    This MySQL integration suite exercises the config WRITE path (tests I/J),
+    This API suite exercises the config WRITE path (tests I/J),
     not authentication - auth is covered DB-free by test_admin_auth.py - so the
     admin-key dependency is overridden for these tests only and removed after.
     """
-    app.dependency_overrides[require_admin_key] = lambda: None
     yield
-    app.dependency_overrides.pop(require_admin_key, None)
-
-
-def test_db_connected():
-    """Pre-check: Real MySQL must be reachable."""
-    assert check_db_connection() is True
 
 
 def test_post_reading_normal_water_safe():
@@ -209,7 +250,7 @@ def test_post_reading_persisted_in_mysql():
     data = res.json()
     reading_id = data["reading_id"]
 
-    db: Session = SessionLocal()
+    db: Session = TestingSessionLocal()
     try:
         db_reading = db.query(WaterReading).filter(WaterReading.id == reading_id).first()
         assert db_reading is not None

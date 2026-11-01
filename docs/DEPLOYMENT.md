@@ -9,20 +9,30 @@ Vercel, and a new Aiven MySQL service.
 Create a new, separate Aiven MySQL service. Do not select or reuse
 `water_quality_db_test` or any existing production database.
 
-After the service is running, create an empty application database if the
-Aiven service did not provision one automatically. Record these settings in a
+After the service is running, use the new `defaultdb` database (or create an
+empty application database if Aiven did not provision one automatically).
+Record these settings in a
 password manager, not GitHub or chat:
 
 | Application setting | Aiven value |
 |---|---|
 | `MYSQL_HOST` | Aiven service host |
-| `MYSQL_PORT` | Aiven MySQL port, normally `3306` |
+| `MYSQL_PORT` | `15444` for this Aiven service |
 | `MYSQL_USER` | Dedicated application user |
 | `MYSQL_PASSWORD` | Dedicated application password |
 | `MYSQL_DATABASE` | New empty database name |
+| `MYSQL_SSL` | `true` for Aiven |
+| `MYSQL_SSL_CA` | Private path to the Aiven CA certificate |
 
-Use the Aiven TLS/SSL requirement for the client connection. If Aiven
-requires an explicit SQLAlchemy URL, use:
+Set `MYSQL_SSL=true` and `MYSQL_PORT=15444`. Provide the Aiven CA certificate through a private
+deployment file/secret and set `MYSQL_SSL_CA` to its runtime path. The
+application creates a verifying TLS context (`CERT_REQUIRED` with hostname
+checking); it never disables certificate verification. If the deployment
+platform supplies the Aiven CA through its trusted system bundle, the
+`MYSQL_SSL_CA` value may be omitted, but an explicit Aiven CA file is
+preferred.
+
+If Aiven requires an explicit SQLAlchemy URL, use:
 
 ```text
 mysql+pymysql://<user>:<password>@<host>:<port>/<database>
@@ -56,12 +66,16 @@ The repository includes [`render.yaml`](../render.yaml). In Render:
    - `MYSQL_USER`
    - `MYSQL_PASSWORD`
    - `MYSQL_DATABASE`
+   - `MYSQL_SSL=true`
+   - `MYSQL_SSL_CA`: private runtime path to the Aiven CA certificate
    - `ADMIN_API_KEY`: generate a strong random value, or leave configuration
      updates disabled until it is provisioned.
-5. Do not set `MODEL_PATH` to an unavailable public URL. The configured path
+5. Upload/provision the Aiven CA certificate as a private Render secret file
+   before the first database connection. Do not commit the certificate.
+6. Do not set `MODEL_PATH` to an unavailable public URL. The configured path
    is intentionally allowed to be absent; the API remains available with ML
    unavailable until private artifact delivery is arranged.
-6. Deploy the service and verify:
+7. Deploy the service and verify:
    - `GET https://<render-service>.onrender.com/health`
    - response status is `healthy` and database is `connected`.
 

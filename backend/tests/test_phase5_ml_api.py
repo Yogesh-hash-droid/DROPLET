@@ -11,17 +11,21 @@ lets the ML verdict change `safety_status` or the screening score.
 PHASE 10 RETARGET (documented per plan section 9): tests 8, 10 and 11 were
 rewritten because the deterministic assessment now evaluates TDS + turbidity
 only (Parameter Rule Check); pH and temperature no longer affect it.
-API tests below use the live MySQL database (dependency overrides cleared) -
-they are BLOCKED until the separately approved migration runs.
+API tests below use an isolated in-memory database built from the current ORM
+metadata. MySQL connectivity is covered separately by the opt-in integration
+suite.
 """
 import inspect
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.main import app
-from app.database import SessionLocal, check_db_connection
+from app.database import Base, get_db
 from app.ml import service as ml_service_module
 from app.ml.service import (
     FEATURE_COLUMNS,
@@ -33,8 +37,8 @@ from app.ml.service import (
 from app.models.prediction import Prediction, SafetyStatus
 from app.services import config_service, safety_service
 
-app.dependency_overrides.clear()
 client = TestClient(app)
+TestingSessionLocal = None
 
 ALLOWED_LABELS = {"POTABLE", "NOT POTABLE"}
 
@@ -50,9 +54,47 @@ def _reading(device_id: str, ph: float, tds: float, turbidity: float, temperatur
     }
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _isolated_database():
+    global TestingSessionLocal
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    TestingSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=engine
+    )
+
+    previous_db = app.dependency_overrides.get(get_db)
+    def override_get_db():
+        yield from _yield_session(TestingSessionLocal)
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+    if previous_db is None:
+        app.dependency_overrides.pop(get_db, None)
+    else:
+        app.dependency_overrides[get_db] = previous_db
+    engine.dispose()
+
+
+def _yield_session(session_factory):
+    session = session_factory()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def test_isolated_database_is_available():
+    assert TestingSessionLocal is not None
+    with TestingSessionLocal() as db:
+        assert db.execute(text("SELECT 1")).scalar_one() == 1
+
+
 # ------------------------------------------------------------------ service ---
-def test_db_connected():
-    assert check_db_connection() is True
 
 
 def test_ml_service_loads_model_once():
@@ -135,7 +177,7 @@ def test_ml_result_persisted_in_mysql():
     assert res.status_code == 201, res.text
     data = res.json()
 
-    db: Session = SessionLocal()
+    db: Session = TestingSessionLocal()
     try:
         row = db.query(Prediction).filter(Prediction.reading_id == data["reading_id"]).first()
         assert row is not None
@@ -199,7 +241,7 @@ def test_safety_unsafe_ml_potable_disagreement():
     assert 0.0 <= data["confidence"] <= 1.0
 
     # Independent recomputation proves the deterministic output was not influenced
-    db: Session = SessionLocal()
+    db: Session = TestingSessionLocal()
     try:
         config = config_service.get_system_config(db)
         expected = safety_service.evaluate_parameter_rule_check(
@@ -278,7 +320,7 @@ def test_ml_failure_keeps_safety_working(monkeypatch):
     assert data["ml_status"] == "UNAVAILABLE"
     assert data["ml_status_reason"] in {"MODEL_UNAVAILABLE", "INFERENCE_FAILED"}
 
-    db: Session = SessionLocal()
+    db: Session = TestingSessionLocal()
     try:
         row = db.query(Prediction).filter(Prediction.reading_id == data["reading_id"]).first()
         assert row is not None
@@ -316,7 +358,7 @@ def test_ml_failure_keeps_safety_working(monkeypatch):
 
 def test_safety_rule_engine_remains_authoritative():
     """12. Every stored row keeps the rule-engine safety status, never an ML one."""
-    db: Session = SessionLocal()
+    db: Session = TestingSessionLocal()
     try:
         rows = (
             db.query(Prediction)

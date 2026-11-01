@@ -10,6 +10,7 @@ settings = get_settings()
 
 engine = create_engine(
     settings.sqlalchemy_database_url,
+    connect_args=settings.sqlalchemy_connect_args,
     pool_pre_ping=True,
     pool_recycle=3600,
     pool_size=10,
