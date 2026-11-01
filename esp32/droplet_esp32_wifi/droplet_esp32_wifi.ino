@@ -29,7 +29,7 @@ const char* WIFI_SSID     = "Airtel_kaya_7448";
 const char* WIFI_PASSWORD = "Air@84151";
 
 // Local IP of your computer running the DROPLET backend:
-const char* BACKEND_URL   = "http://192.168.1.4:8000/api/readings";
+const char* BACKEND_URL   = "https://droplet-api-byl8.onrender.com/api/readings";
 
 const char* DEVICE_ID     = "ESP8266-WATER-001";
 const char* SOURCE_TAG    = "ESP8266";
@@ -108,14 +108,17 @@ void sendTelemetry(float tds, float turbidity, float tempC) {
 
   String url = String(BACKEND_URL);
   if (url.startsWith("https://")) {
-    secureClient.setInsecure(); // Bypass SSL fingerprint check on ESP8266
+    secureClient.setInsecure(); // Bypass SSL certificate validation for cloud IoT
+    secureClient.setBufferSizes(1024, 1024);
     http.begin(secureClient, url);
   } else {
     http.begin(wifiClient, url);
   }
 
+  http.setTimeout(15000); // 15-second timeout for cloud latency
   http.addHeader("Content-Type", "application/json");
-
+  http.addHeader("User-Agent", "ESP8266-DROPLET");
+  http.addHeader("Accept", "application/json");
 
   // Construct JSON payload matching DROPLET API schema:
   // TDS and Turbidity are required; temperature is optional.
@@ -129,7 +132,7 @@ void sendTelemetry(float tds, float turbidity, float tempC) {
   String jsonPayload;
   serializeJson(doc, jsonPayload);
 
-  Serial.print("[HTTP POST] Sending payload: ");
+  Serial.print("[HTTP POST] Sending payload to Render: ");
   Serial.println(jsonPayload);
 
   int httpCode = http.POST(jsonPayload);
@@ -145,6 +148,7 @@ void sendTelemetry(float tds, float turbidity, float tempC) {
   }
 
   http.end();
+
 }
 
 // ==========================================
@@ -163,7 +167,9 @@ void setup() {
   // Connect to Wi-Fi
   Serial.printf("[Wi-Fi] Connecting to %s ", WIFI_SSID);
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 25) {
