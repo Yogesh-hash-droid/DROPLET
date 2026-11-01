@@ -75,8 +75,10 @@ unsigned long lastSendTime   = 0;
 unsigned long lastWifiRetry  = 0;
 bool          firstRequest   = true;       // Longer timeout on cold start
 
-// Persistent HTTPS client — reused across requests (no new TLS handshake per reading)
+// Persistent HTTPS client & HTTPClient — reused across requests (no TLS re-handshake every second)
 WiFiClientSecure secureClient;
+HTTPClient       httpClient;
+bool             isHttpConnected = false;
 
 // ==========================================
 // 5. SENSOR CALCULATION FUNCTIONS
@@ -139,71 +141,57 @@ void sendTelemetry(float tds, float turbidity, float tempC) {
     return;
   }
 
-  // Build JSON payload
+  // Build JSON payload (latest value only; 256-byte static buffer survives drops without RAM exhaustion)
   StaticJsonDocument<256> doc;
   doc["device_id"]   = DEVICE_ID;
   doc["tds"]         = round(tds * 10.0f) / 10.0f;       // 1 dp
   doc["turbidity"]   = round(turbidity * 100.0f) / 100.0f; // 2 dp
   doc["temperature"] = round(tempC * 10.0f) / 10.0f;
   doc["source"]      = SOURCE_TAG;
-  // pH: hardware does not have a pH sensor. Backend uses 7.0 baseline for ML.
-  // Not sent here so the backend stores NULL (no fabricated value in DB).
 
   String jsonPayload;
   serializeJson(doc, jsonPayload);
 
-  Serial.print(F("[HTTP POST] -> "));
-  Serial.println(BACKEND_URL);
-  Serial.print(F("[HTTP POST] Payload: "));
-  Serial.println(jsonPayload);
-
-  // Reuse the persistent connection when possible (avoids full TLS handshake)
-  secureClient.setInsecure();  // TODO: pin the Render TLS cert before production
-  secureClient.setBufferSizes(2048, 512);
-
-  HTTPClient http;
-  http.begin(secureClient, BACKEND_URL);
-  http.setTimeout(firstRequest ? COLD_START_EXTRA_MS : HTTP_TIMEOUT_MS);
-  http.setReuse(true);  // Keep-alive: reuse TCP/TLS connection for next request
-  http.addHeader(F("Content-Type"), F("application/json"));
-  http.addHeader(F("User-Agent"),   F("ESP8266-DROPLET/2.0"));
-  http.addHeader(F("Accept"),       F("application/json"));
-
-  int httpCode = http.POST(jsonPayload);
-  firstRequest = false;
-
-  // Decode and print the response
-  if (httpCode > 0) {
-    Serial.printf("[HTTP POST] Response: %d\n", httpCode);
-    if (httpCode == HTTP_CODE_CREATED || httpCode == HTTP_CODE_OK) {
-      // Read and print a short snippet of the response to save memory
-      String resp = http.getString();
-      resp = resp.substring(0, min((int)resp.length(), 200));
-      Serial.print(F("[HTTP POST] Body: "));
-      Serial.println(resp);
-    } else if (httpCode == 301 || httpCode == 302) {
-      Serial.println(F("[HTTP POST] REDIRECT — check URL (http vs https?)"));
-    } else if (httpCode == 400) {
-      Serial.println(F("[HTTP POST] 400 Bad Request — check JSON field names/types"));
-    } else if (httpCode == 422) {
-      Serial.println(F("[HTTP POST] 422 Unprocessable — field value rejected (range/type)"));
-    } else if (httpCode == 500) {
-      Serial.println(F("[HTTP POST] 500 Server Error — check Render logs"));
-    }
-  } else {
-    // Negative codes are WiFiClientSecure / HTTPClient errors
-    switch (httpCode) {
-      case HTTPC_ERROR_CONNECTION_REFUSED: Serial.println(F("[HTTP POST] -1: Connection refused")); break;
-      case HTTPC_ERROR_SEND_HEADER_FAILED: Serial.println(F("[HTTP POST] Send header failed")); break;
-      case HTTPC_ERROR_READ_TIMEOUT:       Serial.println(F("[HTTP POST] -11: Read timeout (cold start?)")); break;
-      default:
-        Serial.printf("[HTTP POST] Error %d: %s\n", httpCode,
-                      http.errorToString(httpCode).c_str());
-    }
-    Serial.println(F("[HTTP POST] Will retry on next interval (no crash)"));
+  // Initialize or re-establish TLS session if disconnected
+  if (!isHttpConnected || !httpClient.connected()) {
+    Serial.println(F("[HTTP] Connecting TLS session (keep-alive)..."));
+    secureClient.setInsecure();  // TODO: pin the Render TLS cert before production
+    secureClient.setBufferSizes(2048, 512); // Conserve RAM to avoid OOM
+    httpClient.begin(secureClient, BACKEND_URL);
+    httpClient.setTimeout(firstRequest ? COLD_START_EXTRA_MS : HTTP_TIMEOUT_MS);
+    httpClient.setReuse(true);  // Keep-alive: reuse TCP/TLS session
+    isHttpConnected = true;
   }
 
-  http.end();
+  httpClient.addHeader(F("Content-Type"), F("application/json"));
+  httpClient.addHeader(F("User-Agent"),   F("ESP8266-DROPLET/2.0"));
+  httpClient.addHeader(F("Accept"),       F("application/json"));
+  httpClient.addHeader(F("Connection"),   F("keep-alive"));
+
+  unsigned long t0 = millis();
+  int httpCode = httpClient.POST(jsonPayload);
+  unsigned long durationMs = millis() - t0;
+  firstRequest = false;
+
+  Serial.printf("[HTTP POST] Code %d (%lums) -> %s\n", httpCode, durationMs, jsonPayload.c_str());
+
+  if (httpCode > 0) {
+    if (httpCode == HTTP_CODE_CREATED || httpCode == HTTP_CODE_OK) {
+      String resp = httpClient.getString();
+      Serial.printf("[HTTP POST] Success (%d bytes, keep-alive active)\n", resp.length());
+      // Crucial: do NOT call httpClient.end() here! Keep connection open for next second's send.
+    } else {
+      Serial.printf("[HTTP POST] Server returned HTTP %d\n", httpCode);
+      httpClient.end();
+      isHttpConnected = false;
+    }
+  } else {
+    // Negative error: network drop / timeout -> reset connection for next loop
+    Serial.printf("[HTTP POST] Connection error %d: %s\n", httpCode,
+                  httpClient.errorToString(httpCode).c_str());
+    httpClient.end();
+    isHttpConnected = false;
+  }
 }
 
 // ==========================================

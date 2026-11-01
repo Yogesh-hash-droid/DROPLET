@@ -1,0 +1,23 @@
+{
+  "buildCommand": "cd frontend && npm run build",
+  "outputDirectory": "frontend/dist",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://droplet-api-byl8.onrender.com/api/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://droplet-api-byl8.onrender.com/health"
+    },
+    {
+      "source": "/ml/:path*",
+      "destination": "https://droplet-api-byl8.onrender.com/ml/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/frontend/$1"
+    }
+  ]
+}
