@@ -18,7 +18,9 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+
 
 // ==========================================
 // 1. WI-FI & BACKEND CONFIGURATION
@@ -100,11 +102,20 @@ void sendTelemetry(float tds, float turbidity, float tempC) {
     return;
   }
 
-  WiFiClient wifiClient;
   HTTPClient http;
+  WiFiClient wifiClient;
+  WiFiClientSecure secureClient;
 
-  http.begin(wifiClient, BACKEND_URL);
+  String url = String(BACKEND_URL);
+  if (url.startsWith("https://")) {
+    secureClient.setInsecure(); // Bypass SSL fingerprint check on ESP8266
+    http.begin(secureClient, url);
+  } else {
+    http.begin(wifiClient, url);
+  }
+
   http.addHeader("Content-Type", "application/json");
+
 
   // Construct JSON payload matching DROPLET API schema:
   // TDS and Turbidity are required; temperature is optional.

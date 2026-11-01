@@ -41,7 +41,11 @@ export async function fetchLatestPrediction() {
 }
 
 export async function fetchHealth() {
-  const { data } = await axios.get('/health', { timeout: 5000 })
+  let healthUrl = '/health'
+  if (API_BASE_URL.startsWith('http://') || API_BASE_URL.startsWith('https://')) {
+    healthUrl = API_BASE_URL.replace(/\/api\/?$/, '') + '/health'
+  }
+  const { data } = await axios.get(healthUrl, { timeout: 5000 })
   return data
 }
 

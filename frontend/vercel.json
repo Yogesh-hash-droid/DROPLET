@@ -1,5 +1,19 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": "vite"
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://droplet-api-byl8.onrender.com/api/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://droplet-api-byl8.onrender.com/health"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/"
+    }
+  ]
 }
