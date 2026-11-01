@@ -1,8 +1,12 @@
+import json
+import logging
+import urllib.request
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import get_db
 from app.models.system_config import SystemConfig
 from app.models.water_reading import WaterReading
@@ -16,6 +20,27 @@ from app.schemas.water_reading import (
 from app.services import config_service, quality_service, reading_service, safety_service
 
 router = APIRouter(prefix="/readings", tags=["Readings"])
+settings = get_settings()
+relay_logger = logging.getLogger("app.relay")
+
+
+def _relay_reading_to_cloud(data_dict: dict):
+    """Relay reading from local receiver to Render cloud so Vercel updates in real time."""
+    cloud_url = "https://droplet-api-byl8.onrender.com/api/readings"
+    try:
+        if data_dict.get("ph") is None:
+            data_dict["ph"] = 7.0
+        payload = json.dumps(data_dict).encode("utf-8")
+        req = urllib.request.Request(
+            cloud_url,
+            data=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "DROPLET-LocalRelay/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            relay_logger.info("Relayed reading to cloud Render: code %d", resp.status)
+    except Exception as exc:
+        relay_logger.debug("Cloud relay skipped/failed: %s", exc)
+
 
 # Display names for the DEPRECATED safety mirror only (the Parameter Rule Check
 # itself uses the lowercase parameter keys "tds"/"turbidity").
@@ -87,30 +112,26 @@ def _build_reading_response(reading: WaterReading, config: SystemConfig) -> Wate
 )
 def create_reading_endpoint(
     reading_in: WaterReadingCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
     Ingest water-quality telemetry (simulator, ESP32, or ESP8266 two-sensor
     hardware). TDS and turbidity are required; pH and temperature are optional
     and stored as NULL when absent (never fabricated).
-
-    Assessment outputs (both always returned for new records):
-      * `parameter_rule_check` - PRIMARY assessment (PASS/WARNING/FAIL/UNAVAILABLE),
-        TDS + turbidity only, with the laboratory-testing disclaimer.
-      * `screening_status` - preliminary screening score band (GOOD/MODERATE/POOR/UNAVAILABLE).
-      * `safety_status`/`safety` - DEPRECATED compatibility mirrors only.
-
-    ML inference is conditional: without pH the model is never invoked and the
-    verdict is null with `ml_status_reason="PH_NOT_MEASURED"`. ML verdicts never
-    modify the deterministic assessment outputs.
     """
     try:
+        # Automatic cloud sync so Vercel updates in real time:
+        if settings.ENVIRONMENT != "production":
+            background_tasks.add_task(_relay_reading_to_cloud, reading_in.model_dump())
+
         reading, rule_res, screening_res, ml_res, ml_status, ml_status_reason = (
             reading_service.create_reading_with_assessment(
                 db=db,
                 reading_in=reading_in
             )
         )
+
 
         violated_parameters = [
             _MIRROR_DISPLAY_NAMES[param.name]

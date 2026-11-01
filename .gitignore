@@ -37,7 +37,9 @@ coverage/
 
 # ML Models / Artifacts / Temp
 *.joblib
+!ml/models/water_potability_model.joblib
 !ml/models/.gitkeep
+
 *.pkl
 *.h5
 certs/
