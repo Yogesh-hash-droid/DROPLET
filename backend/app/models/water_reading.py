@@ -11,12 +11,14 @@ class WaterReading(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     device_id = Column(String(64), ForeignKey("devices.device_id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False, index=True)
-    # Legacy columns; NULL = not measured (Phase 10 two-sensor hardware scope).
-    # Values are never fabricated; existing historical rows keep their values.
-    ph = Column(Float, nullable=True, comment="legacy column; NULL = not measured")
-    tds = Column(Float, nullable=False)
-    turbidity = Column(Float, nullable=False)
-    temperature = Column(Float, nullable=True, comment="legacy column; NULL = not measured")
+    ph = Column(Float, nullable=True, comment="NULL = not measured")
+    tds = Column(Float, nullable=True, comment="NULL = sensor fault / not measured")
+    turbidity = Column(Float, nullable=True, comment="NULL = sensor fault / not measured")
+    temperature = Column(Float, nullable=True, comment="NULL = not measured")
+    sensor_status = Column(String(32), nullable=False, default="ok")
+    wifi_rssi = Column(Integer, nullable=True)
+    uptime = Column(Integer, nullable=True)
+    firmware_version = Column(String(32), nullable=True)
     source = Column(Enum(DeviceSource), nullable=False, default=DeviceSource.SIMULATION, index=True)
     timestamp = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
 
@@ -39,7 +41,6 @@ class WaterReading(Base):
 
     @property
     def score_method(self) -> str | None:
-        """Assessment discriminator: None (IS NULL) = historical four-parameter record."""
         if self.assessment and self.assessment.score_method:
             return self.assessment.score_method.value
         return None

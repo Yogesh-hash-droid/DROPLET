@@ -32,6 +32,7 @@ def _to_response(device: Device) -> DeviceResponse:
     )
 
 
+
 @router.get(
     "",
     response_model=List[DeviceResponse],

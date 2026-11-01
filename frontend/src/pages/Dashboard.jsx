@@ -38,13 +38,38 @@ export default function Dashboard({
     ? Math.max(0, Date.now() - (parseUtcDate(latest.timestamp)?.getTime() || 0))
     : Infinity
 
-  // ONLINE if server reports ONLINE, OR if we received a reading within 15 seconds
-  // (SSE-pushed data means the sensor is actively sending)
-  const isOnline = device?.status === 'ONLINE' || latestAgeMs <= 15000
+  // ONLINE if server reports ONLINE (from 5s heartbeat window), OR if we received a reading within 5 seconds
+  const isOnline = device?.status === 'ONLINE' || latestAgeMs <= 5000
   const effectiveLastSeen = latest?.timestamp || device?.last_seen
 
-  // "No data" state: reading older than 10 seconds (gives buffer for WiFi retransmission)
+  // "No data" state: reading older than 10 seconds
   const isStale = latestAgeMs > 10000 && latest !== null
+
+  // Sensor hardware subsystem status
+  const sensorStatus = latest?.sensor_status || (latest?.tds != null && latest?.turbidity != null ? 'ok' : 'ads1115_not_found')
+  const sensorStatusLabel =
+    sensorStatus === 'ok'
+      ? 'OK (Active)'
+      : sensorStatus === 'ads1115_not_found'
+      ? 'ADS1115 Not Found'
+      : sensorStatus === 'read_error'
+      ? 'I2C Read Error'
+      : sensorStatus
+
+  const sensorStatusClass = sensorStatus === 'ok' ? 'text-ok' : 'text-bad'
+
+  // WiFi Signal strength
+  const wifiRssi = latest?.wifi_rssi
+  const wifiStrengthLabel =
+    wifiRssi == null
+      ? 'N/A'
+      : wifiRssi >= -65
+      ? `${wifiRssi} dBm (Strong)`
+      : wifiRssi >= -75
+      ? `${wifiRssi} dBm (Good)`
+      : wifiRssi >= -85
+      ? `${wifiRssi} dBm (Fair)`
+      : `${wifiRssi} dBm (Weak)`
 
   return (
     <div className="page">
@@ -72,9 +97,24 @@ export default function Dashboard({
         )}
       </div>
 
+      {/* Sensor fault banner when device is communicating but ADS1115 is faulty */}
+      {sensorStatus !== 'ok' && (
+        <div className="fault-banner">
+          <div className="fault-banner__icon">⚠️</div>
+          <div className="fault-banner__body">
+            <strong>Device online, but sensor module not responding. Check ADS1115 wiring.</strong>
+            <p>
+              {sensorStatus === 'ads1115_not_found'
+                ? 'The ADS1115 ADC did not ACK on I2C address 0x48–0x4B. Verify 3V3 measured at VDD, GND and ADDR to GND, SDA=D2 (GPIO4), SCL=D1 (GPIO5).'
+                : 'I2C read error occurred during conversion. Checking bus recovery and wiring stability.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {isStale && (
         <div className="stale-banner">
-          ⚠️ No new data for {Math.round(latestAgeMs / 1000)}s — sensor may be offline.
+          ⚠️ No new data for {Math.round(latestAgeMs / 1000)}s — device may be offline.
         </div>
       )}
 
@@ -102,10 +142,27 @@ export default function Dashboard({
             </div>
 
             <div className="info-panel dashboard-status-card">
+              <span className="muted">Sensor module</span>
+              <strong className={sensorStatusClass}>
+                {sensorStatusLabel}
+              </strong>
+              <span className="muted">ADS1115 16-bit I2C ADC</span>
+            </div>
+
+            <div className="info-panel dashboard-status-card">
+              <span className="muted">Wi-Fi signal</span>
+              <strong>{wifiStrengthLabel}</strong>
+              <span className="muted">
+                {latest.uptime != null ? `${latest.uptime}s uptime` : 'Wi-Fi Telemetry'}
+              </span>
+            </div>
+
+            <div className="info-panel dashboard-status-card">
               <span className="muted">Screening status</span>
               <strong>{latest.screening_status || 'UNAVAILABLE'}</strong>
               <span className="muted">TDS + turbidity preliminary screening</span>
             </div>
+
             {(latest.ph == null || latest.temperature == null) && (
               <div className="info-panel dashboard-status-card">
                 <span className="muted">Unmeasured sensors</span>
@@ -117,7 +174,13 @@ export default function Dashboard({
 
           <section className="sensor-grid">
             {PARAMS.map((p) => (
-              <SensorCard key={p.key} param={p} value={latest[p.key]} config={config} />
+              <SensorCard
+                key={p.key}
+                param={p}
+                value={latest[p.key]}
+                config={config}
+                sensorStatus={sensorStatus}
+              />
             ))}
           </section>
 

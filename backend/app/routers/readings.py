@@ -81,7 +81,12 @@ def _build_reading_response(reading: WaterReading, config: SystemConfig) -> Wate
     else:
         # A NULL prediction never renders as "NOT POTABLE": it means no verdict.
         response.ml_status = "UNAVAILABLE"
-        response.ml_status_reason = "PH_NOT_MEASURED" if reading.ph is None else None
+        if reading.sensor_status != "ok":
+            response.ml_status_reason = "SENSOR_FAULT"
+        elif reading.ph is None:
+            response.ml_status_reason = "PH_NOT_MEASURED"
+        else:
+            response.ml_status_reason = None
 
     return response
 
@@ -110,12 +115,39 @@ def create_reading_endpoint(
             )
         )
 
-
-        violated_parameters = [
-            _MIRROR_DISPLAY_NAMES[param.name]
-            for param in rule_res.parameters
-            if param.status != "PASS"
-        ]
+        if rule_res is not None and screening_res is not None:
+            violated_parameters = [
+                _MIRROR_DISPLAY_NAMES[param.name]
+                for param in rule_res.parameters
+                if param.status != "PASS"
+            ]
+            quality_score = screening_res.overall_score
+            screening_status = screening_res.screening_status
+            screening_explanation = screening_res.screening_explanation
+            parameter_rule_check = _to_rule_check_info(rule_res)
+            safety_status = rule_res.storage_status.value
+            warning_message = rule_res.warning_message
+            safety = SafetyInfo(
+                status=rule_res.storage_status.value,
+                warning_message=rule_res.warning_message,
+                violated_parameters=violated_parameters
+            )
+        else:
+            quality_score = None
+            screening_status = "UNAVAILABLE"
+            screening_explanation = (
+                "Sensor module offline: ADS1115 not found at configured I2C address"
+                if reading.sensor_status == "ads1115_not_found"
+                else f"Sensor read error ({reading.sensor_status})"
+            )
+            parameter_rule_check = None
+            safety_status = "WARNING"
+            warning_message = screening_explanation
+            safety = SafetyInfo(
+                status="WARNING",
+                warning_message=warning_message,
+                violated_parameters=[]
+            )
 
         ingestion_response = ReadingIngestionResponse(
             id=reading.id,
@@ -127,20 +159,16 @@ def create_reading_endpoint(
             temperature=reading.temperature,
             source=reading.source.value,
             timestamp=reading.timestamp,
-            quality_score=screening_res.overall_score,
+            quality_score=quality_score,
             score_method=reading.score_method,
-            screening_status=screening_res.screening_status,
-            screening_explanation=screening_res.screening_explanation,
+            screening_status=screening_status,
+            screening_explanation=screening_explanation,
             # Primary assessment for new records (plan section 3.2).
-            parameter_rule_check=_to_rule_check_info(rule_res),
+            parameter_rule_check=parameter_rule_check,
             # DEPRECATED compatibility mirrors - storage mapping only (P1).
-            safety_status=rule_res.storage_status.value,
-            warning_message=rule_res.warning_message,
-            safety=SafetyInfo(
-                status=rule_res.storage_status.value,
-                warning_message=rule_res.warning_message,
-                violated_parameters=violated_parameters
-            ),
+            safety_status=safety_status,
+            warning_message=warning_message,
+            safety=safety,
             reading=WaterReadingResponse.model_validate(reading),
             prediction=ml_res.prediction if ml_res else None,
             confidence=ml_res.confidence if ml_res else None,
@@ -157,11 +185,15 @@ def create_reading_endpoint(
                 "turbidity": reading.turbidity,
                 "ph": reading.ph,
                 "temperature": reading.temperature,
+                "sensor_status": reading.sensor_status,
+                "wifi_rssi": reading.wifi_rssi,
+                "uptime": reading.uptime,
+                "firmware_version": reading.firmware_version,
                 "source": reading.source.value,
                 "timestamp": reading.timestamp.isoformat() if reading.timestamp else None,
-                "quality_score": screening_res.overall_score,
-                "screening_status": screening_res.screening_status,
-                "safety_status": rule_res.storage_status.value,
+                "quality_score": quality_score,
+                "screening_status": screening_status,
+                "safety_status": safety_status,
                 "prediction": ml_res.prediction if ml_res else None,
                 "confidence": ml_res.confidence if ml_res else None,
                 "ml_status": ml_status,

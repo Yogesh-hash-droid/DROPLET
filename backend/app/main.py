@@ -14,9 +14,30 @@ from app.ml.service import get_ml_service, ML_DISCLAIMER
 from app.routers import readings, config, predictions, devices
 from app.sse import event_generator
 
-# Ensure database tables exist
+def _run_migrations(db_engine):
+    from sqlalchemy import text
+    with db_engine.connect() as conn:
+        statements = [
+            "ALTER TABLE water_readings ADD COLUMN sensor_status VARCHAR(32) DEFAULT 'ok'",
+            "ALTER TABLE water_readings ADD COLUMN wifi_rssi INT NULL",
+            "ALTER TABLE water_readings ADD COLUMN uptime INT NULL",
+            "ALTER TABLE water_readings ADD COLUMN firmware_version VARCHAR(32) NULL",
+            "ALTER TABLE devices ADD COLUMN sensor_status VARCHAR(32) DEFAULT 'ok'",
+            "ALTER TABLE devices ADD COLUMN wifi_rssi INT NULL",
+            "ALTER TABLE devices ADD COLUMN firmware_version VARCHAR(32) NULL",
+            "ALTER TABLE predictions MODIFY COLUMN quality_score FLOAT NULL",
+        ]
+        for stmt in statements:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass
+
+# Ensure database tables exist and schema columns are synchronized
 try:
     Base.metadata.create_all(bind=engine)
+    _run_migrations(engine)
 except Exception as e:
     # Log warning if initial DB check fails (e.g. during offline test run)
     pass

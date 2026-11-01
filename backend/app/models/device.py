@@ -25,6 +25,9 @@ class Device(Base):
     device_name = Column(String(128), nullable=False)
     source = Column(Enum(DeviceSource), nullable=False, default=DeviceSource.SIMULATION)
     status = Column(Enum(DeviceStatus), nullable=False, default=DeviceStatus.OFFLINE)
+    sensor_status = Column(String(32), nullable=False, default="ok")
+    wifi_rssi = Column(Integer, nullable=True)
+    firmware_version = Column(String(32), nullable=True)
     last_seen = Column(DateTime, nullable=True, default=lambda: datetime.now(timezone.utc))
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 

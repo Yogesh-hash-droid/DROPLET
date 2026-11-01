@@ -47,6 +47,7 @@ def create_reading_with_assessment(
     config = config_service.get_system_config(db)
 
     # 2. Upsert or update device tracking
+    # 2. Upsert or update device tracking with latest status & RSSI
     device = db.query(Device).filter(Device.device_id == reading_in.device_id).first()
     if not device:
         device_name = f"{reading_in.source.capitalize()} Node ({reading_in.device_id})"
@@ -55,6 +56,9 @@ def create_reading_with_assessment(
             device_name=device_name,
             source=DeviceSource(reading_in.source),
             status=DeviceStatus.ONLINE,
+            sensor_status=reading_in.sensor_status,
+            wifi_rssi=reading_in.wifi_rssi,
+            firmware_version=reading_in.firmware_version,
             last_seen=now_utc,
             created_at=now_utc
         )
@@ -64,44 +68,68 @@ def create_reading_with_assessment(
         device.last_seen = now_utc
         device.status = DeviceStatus.ONLINE
         device.source = DeviceSource(reading_in.source)
+        device.sensor_status = reading_in.sensor_status
+        if reading_in.wifi_rssi is not None:
+            device.wifi_rssi = reading_in.wifi_rssi
+        if reading_in.firmware_version is not None:
+            device.firmware_version = reading_in.firmware_version
 
-    # 3. Create reading entity - optional values round ONLY when present.
-    #    Missing pH/temperature are persisted as SQL NULL, never defaulted.
+    # 3. Create reading entity
     db_reading = WaterReading(
         device_id=reading_in.device_id,
         ph=round(float(reading_in.ph), 2) if reading_in.ph is not None else None,
-        tds=round(float(reading_in.tds), 2),
-        turbidity=round(float(reading_in.turbidity), 2),
+        tds=round(float(reading_in.tds), 2) if reading_in.tds is not None else None,
+        turbidity=round(float(reading_in.turbidity), 2) if reading_in.turbidity is not None else None,
         temperature=round(float(reading_in.temperature), 2) if reading_in.temperature is not None else None,
+        sensor_status=reading_in.sensor_status,
+        wifi_rssi=reading_in.wifi_rssi,
+        uptime=reading_in.uptime,
+        firmware_version=reading_in.firmware_version,
         source=DeviceSource(reading_in.source),
         timestamp=now_utc
     )
     db.add(db_reading)
     db.flush()  # Generates db_reading.id
 
-    # 4. Parameter Rule Check - TDS + turbidity only (primary assessment for
-    #    new records). Storage mirror keeps the NOT NULL column satisfied.
+    # 4. Check if sensor values are in fault state
+    if reading_in.sensor_status != "ok" or db_reading.tds is None or db_reading.turbidity is None:
+        # Fault state: Do NOT calculate rule checks or screening scores or run ML.
+        from app.models.prediction import SafetyStatus as PredictionSafetyStatus
+        fault_warning = (
+            "Sensor module offline: ADS1115 not found at configured I2C address"
+            if reading_in.sensor_status == "ads1115_not_found"
+            else f"Sensor read error ({reading_in.sensor_status})"
+        )
+        db_prediction = Prediction(
+            reading_id=db_reading.id,
+            prediction=None,
+            confidence=None,
+            quality_score=None,
+            safety_status=PredictionSafetyStatus.WARNING,
+            warning_message=fault_warning,
+            score_method=ScoreMethod.TWO_PARAM_SCREENING,
+            timestamp=now_utc
+        )
+        db.add(db_prediction)
+        db.commit()
+        db.refresh(db_reading)
+        return db_reading, None, None, None, "UNAVAILABLE", "SENSOR_FAULT"
+
+    # 5. Normal operation: Parameter Rule Check
     rule_result = safety_service.evaluate_parameter_rule_check(
         tds=db_reading.tds,
         turbidity=db_reading.turbidity,
         config=config
     )
 
-    # 5. Two-parameter screening score (0-100, configurable bands - B1)
+    # 6. Two-parameter screening score (0-100, configurable bands - B1)
     screening_result = quality_service.calculate_screening_score(
         tds=db_reading.tds,
         turbidity=db_reading.turbidity,
         config=config
     )
 
-    # 6. Conditional ML Inference (Phase 5 - EXPERIMENTAL / ADVISORY).
-    #    pH absent -> the model is NEVER invoked and no pH is fabricated:
-    #    verdict stays NULL with reason PH_NOT_MEASURED.
-    #    Guarded twice: the ML wrapper swallows its own errors, and this block
-    #    guarantees that no ML failure can ever break the assessment flow.
-    # 6. ML Inference (Phase 5 - EXPERIMENTAL / ADVISORY).
-    # Uses measured pH, or standard neutral drinking water baseline (7.0) when hardware
-    # only has TDS/turbidity probes, ensuring ML potability prediction is active.
+    # 7. Conditional ML Inference (Phase 5 - EXPERIMENTAL / ADVISORY).
     ml_status: str = "AVAILABLE"
     ml_status_reason: Optional[str] = None
     ml_result: Optional[MLInferenceResult] = None
@@ -116,7 +144,7 @@ def create_reading_with_assessment(
                 tds=db_reading.tds,
                 turbidity=db_reading.turbidity,
             )
-        except Exception as exc:  # noqa: BLE001 - assessment must never depend on ML
+        except Exception as exc:  # noqa: BLE001
             logger.error("ML inference step failed, storing NULL prediction: %s", exc)
             ml_result = None
         if ml_result is None:
@@ -126,10 +154,7 @@ def create_reading_with_assessment(
                 else "INFERENCE_FAILED"
             )
 
-
-    # 7. Store assessment record in the predictions table (single existing table:
-    #    prediction/confidence hold the ML verdict, or NULL when ML did not run;
-    #    score_method marks this as a new two-parameter screening record - R-3)
+    # 8. Store assessment record in predictions table
     db_prediction = Prediction(
         reading_id=db_reading.id,
         prediction=PotabilityResult(ml_result.prediction) if ml_result else None,

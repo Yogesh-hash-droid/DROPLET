@@ -51,7 +51,7 @@ class Prediction(Base):
         index=True,
     )
     confidence = Column(Float, nullable=True)
-    quality_score = Column(Float, nullable=False)
+    quality_score = Column(Float, nullable=True)
     # Phase 10 decision R-3 (REQUIRED): discriminator between historical
     # four-parameter records (NULL, never backfilled) and new two-parameter
     # screening records (TWO_PARAM_SCREENING). Must exist in MySQL before

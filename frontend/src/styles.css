@@ -357,3 +357,33 @@ p { margin: 0; }
   font-size: 0.9rem;
   margin-bottom: 12px;
 }
+
+/* ---------- Sensor fault banner ---------- */
+.fault-banner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: var(--radius);
+  color: #fca5a5;
+  margin-bottom: 12px;
+}
+.fault-banner__icon {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+.fault-banner__body strong {
+  display: block;
+  font-size: 0.96rem;
+  color: #f87171;
+  margin-bottom: 4px;
+}
+.fault-banner__body p {
+  font-size: 0.85rem;
+  color: #fca5a5;
+  line-height: 1.4;
+}
+.text-bad { color: var(--bad); }
+
