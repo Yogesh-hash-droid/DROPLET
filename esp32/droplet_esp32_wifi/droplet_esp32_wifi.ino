@@ -10,19 +10,18 @@
  * ============================================================================
  *
  * 1. ESP8266 (NodeMCU 1.0 ESP-12E):
- *    - TDS Sensor Signal      -> Pin A0
- *    - TDS Sensor VCC         -> Pin 3V3 (or VU / 3V)
- *                               [NOTE: Do NOT use VIN! On NodeMCU boards powered via
- *                               USB, the VIN pin is input-only (0V). Always connect
- *                               VCC to 3V3 (or VU if your board has it) so the sensor
- *                               is properly powered with its power LED ON.]
- *    - TDS Sensor GND         -> Pin GND
- *
- *    Optional Dual-Sensor on ESP8266 (Mode 3: SENSOR_MODE_DUAL_SWITCH):
- *    - TDS VCC                -> Pin D5 (GPIO 14)
- *    - Turbidity VCC          -> Pin D6 (GPIO 12)
- *    - Both Signal pins (AOUT)-> Pin A0
- *    - Shared GND             -> Pin GND
+ *    - Power Pins (Both Sensors):
+ *        * VCC -> Pin 3V3 (or VU if available). DO NOT USE VIN (VIN is 0V on USB power!)
+ *        * GND -> Pin GND
+ *    - Single Sensor on A0:
+ *        * If testing TDS: Connect TDS Signal -> Pin A0 (set ESP8266_MODE MODE_TDS_ONLY)
+ *        * If testing Turbidity: Connect Turbidity Signal -> Pin A0 (set ESP8266_MODE MODE_TURBIDITY_ONLY)
+ *          [IMPORTANT: On the Turbidity adapter board, set the slide switch to 'A' (Analog), NOT 'D'!]
+ *    - Dual Sensors on A0 (Mode 3: SENSOR_MODE_DUAL_SWITCH):
+ *        * TDS VCC       -> Pin D5 (GPIO 14)
+ *        * Turbidity VCC -> Pin D6 (GPIO 12)
+ *        * Both Signals  -> Pin A0
+ *        * Shared GND    -> Pin GND
  *
  * 2. ESP32 DevKit V1:
  *    - TDS Sensor Signal      -> GPIO 34 (ADC1_CH6)
