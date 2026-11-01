@@ -3,7 +3,7 @@
  * Dedicated Wi-Fi Telemetry Firmware for ESP8266 (NodeMCU) + ADS1115 ADC
  *
  * Streams real-time TDS and Turbidity sensor readings to the DROPLET
- * FastAPI backend via HTTPS POST /api/readings.
+ * FastAPI backend via HTTPS POST /api/readings every 1 second.
  *
  * ============================================================================
  * AUTHORITATIVE WIRING CONNECTIONS (From Specification):
@@ -36,6 +36,7 @@
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <Wire.h>
+#include <Adafruit_ADS1X15.h>
 #include <ArduinoJson.h>
 
 // ==========================================
@@ -53,19 +54,14 @@ const char* SOURCE_TAG    = "ESP8266";
 // ==========================================
 // 2. TIMING & HARDWARE CONSTANTS
 // ==========================================
-const unsigned long SEND_INTERVAL_MS    = 1000;   // 1 reading per second
+const unsigned long SEND_INTERVAL_MS    = 1000;   // Exactly 1 second
 const unsigned long WIFI_RETRY_MS       = 5000;   // Retry WiFi reconnect every 5s
 const unsigned long HTTP_TIMEOUT_MS     = 15000;  // 15s timeout
 const unsigned long COLD_START_EXTRA_MS = 25000;  // 25s for first request (cold start)
 
-// ADS1115 I2C Configuration (ADDR connected to GND = 0x48)
-#define ADS1115_I2C_ADDR  0x48
-#define PIN_I2C_SDA       D2      // GPIO 4
-#define PIN_I2C_SCL       D1      // GPIO 5
-
-// Channels on the ADS1115
-#define ADS_CH_TDS        0       // Channel A0 = TDS Meter
-#define ADS_CH_TURBIDITY  1       // Channel A1 = Turbidity Sensor
+// Channels on the ADS1115 (0 = A0, 1 = A1)
+#define ADS_CH_TDS        0       // Channel A0 = TDS Meter (Yellow wire)
+#define ADS_CH_TURBIDITY  1       // Channel A1 = Turbidity Sensor (Purple wire)
 
 const float DEFAULT_TEMPERATURE = 25.0f;  // Standard reference temperature (°C)
 const float DEFAULT_PH          = 7.0f;   // Neutral water baseline (activates ML model)
@@ -79,70 +75,14 @@ bool          firstRequest    = true;
 bool          isHttpConnected = false;
 bool          ads1115Found    = false;
 
+uint8_t       adsDetectedAddr = 0x48;
+
+Adafruit_ADS1115 ads;
 WiFiClientSecure secureClient;
 HTTPClient       httpClient;
 
 // ==========================================
-// 4. NATIVE ADS1115 16-BIT I2C ADC DRIVER
-// ==========================================
-
-/**
- * Trigger and read single-ended analog voltage from ADS1115 channel (0 to 3).
- * PGA Gain set to +/-4.096V (FS), giving 0.125 mV (0.000125V) per LSB.
- */
-float readADS1115Voltage(uint8_t channel, int16_t &outRaw) {
-  // Config: OS=1 (start), PGA=+/-4.096V (0x0200), MODE=Single-Shot (0x0100), DR=860SPS (0x00E0), COMP_DIS=0x0003
-  // 860 Samples Per Second = 1.16ms conversion time!
-  uint16_t config = 0x8000 | 0x0200 | 0x0100 | 0x00E0 | 0x0003;
-
-  if (channel == 0)      config |= 0x4000; // AIN0 vs GND (TDS)
-  else if (channel == 1) config |= 0x5000; // AIN1 vs GND (Turbidity)
-  else if (channel == 2) config |= 0x6000; // AIN2 vs GND
-  else if (channel == 3) config |= 0x7000; // AIN3 vs GND
-
-  // Write Configuration Register (0x01)
-  Wire.beginTransmission(ADS1115_I2C_ADDR);
-  Wire.write(0x01);
-  Wire.write((uint8_t)(config >> 8));
-  Wire.write((uint8_t)(config & 0xFF));
-  Wire.endTransmission();
-
-  // Fast 16-bit conversion at 860 SPS (1.16ms conversion)
-  delay(2);
-
-  // Point to Conversion Register (0x00)
-  Wire.beginTransmission(ADS1115_I2C_ADDR);
-  Wire.write(0x00);
-  Wire.endTransmission();
-
-  // Read 2 bytes (16-bit signed conversion result, MSB first)
-  Wire.requestFrom((uint8_t)ADS1115_I2C_ADDR, (uint8_t)2);
-  if (Wire.available() >= 2) {
-    outRaw = (int16_t)((Wire.read() << 8) | Wire.read());
-    if (outRaw < 0) outRaw = 0; // Negative voltage clamp
-
-    // 16-bit LSB = 4.096V / 32768 = 0.000125V (0.125 mV)
-    float voltage = outRaw * 0.000125f;
-    return voltage;
-  }
-
-  outRaw = 0;
-  return 0.0f;
-}
-
-// Fast ADS1115 reading (takes only 4ms per channel)
-float readAverageADSVoltage(uint8_t channel, int samples = 2) {
-  float sum = 0.0f;
-  int16_t dummyRaw;
-  for (int i = 0; i < samples; i++) {
-    sum += readADS1115Voltage(channel, dummyRaw);
-    delay(1);
-  }
-  return sum / (float)samples;
-}
-
-// ==========================================
-// 5. PHYSICAL CALCULATION FORMULAS
+// 4. PHYSICAL CALCULATION FORMULAS
 // ==========================================
 
 /**
@@ -176,7 +116,7 @@ float calculateTurbidity(float voltage) {
     ntu = (3.3f - voltage) * 10.0f;
     if (ntu < 0.50f) ntu = 0.50f;
   } else if (voltage < 0.05f) {
-    ntu = 0.0f; // Probe disconnected
+    ntu = 0.0f; // Probe disconnected or switch on 'D'
   } else {
     // Standard quadratic characteristic curve
     ntu = -1120.4f * powf(voltage, 2) + 5742.3f * voltage - 4352.9f;
@@ -187,7 +127,7 @@ float calculateTurbidity(float voltage) {
 }
 
 // ==========================================
-// 6. WI-FI MANAGEMENT
+// 5. WI-FI MANAGEMENT
 // ==========================================
 bool ensureWiFi() {
   if (WiFi.status() == WL_CONNECTED) return true;
@@ -203,7 +143,7 @@ bool ensureWiFi() {
 }
 
 // ==========================================
-// 7. TELEMETRY TRANSMISSION (PERSISTENT HTTPS)
+// 6. TELEMETRY TRANSMISSION (PERSISTENT HTTPS)
 // ==========================================
 void sendTelemetry(float tds, float turbidity, float tempC, float phVal) {
   if (!ensureWiFi()) {
@@ -235,7 +175,7 @@ void sendTelemetry(float tds, float turbidity, float tempC, float phVal) {
   }
 
   httpClient.addHeader(F("Content-Type"), F("application/json"));
-  httpClient.addHeader(F("User-Agent"),   F("ESP8266-ADS1115-DROPLET/3.0"));
+  httpClient.addHeader(F("User-Agent"),   F("ESP8266-ADS1115-DROPLET/3.1"));
   httpClient.addHeader(F("Accept"),       F("application/json"));
   httpClient.addHeader(F("Connection"),   F("keep-alive"));
 
@@ -264,7 +204,7 @@ void sendTelemetry(float tds, float turbidity, float tempC, float phVal) {
 }
 
 // ==========================================
-// 8. SETUP
+// 7. SETUP
 // ==========================================
 void setup() {
   Serial.begin(115200);
@@ -277,19 +217,41 @@ void setup() {
   Serial.printf("[Config] Device ID  : %s\n", DEVICE_ID);
   Serial.printf("[Config] Interval   : %lums (1 reading/second)\n", SEND_INTERVAL_MS);
 
-  // Initialize I2C bus for ADS1115 (D2 = SDA / GPIO 4, D1 = SCL / GPIO 5)
-  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-  Wire.setClock(100000); // 100 kHz standard I2C clock
+  // Initialize I2C bus: D2 = SDA (GPIO 4), D1 = SCL (GPIO 5)
+  Wire.begin(D2, D1);
+  Wire.setClock(100000); // 100 kHz I2C clock
 
-  // Probe ADS1115 on I2C address 0x48
-  Wire.beginTransmission(ADS1115_I2C_ADDR);
-  byte i2cError = Wire.endTransmission();
-  if (i2cError == 0) {
-    Serial.println(F("[I2C] SUCCESS: ADS1115 detected at address 0x48!"));
+  // Scan I2C bus to verify physical wiring to ADS1115
+  Serial.println(F("[I2C] Scanning I2C bus (SDA=D2, SCL=D1)..."));
+  uint8_t adsAddr = 0;
+  int deviceCount = 0;
+  for (uint8_t address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("[I2C] Found device at address 0x%02X!\n", address);
+      deviceCount++;
+      if (address >= 0x48 && address <= 0x4B) {
+        adsAddr = address;
+      }
+    }
+  }
+
+  if (deviceCount == 0) {
+    Serial.println(F("[I2C] ERROR: No I2C devices detected! Please check jumper wires:"));
+    Serial.println(F("      1. ESP 3V -> ADS VDD (Red wire)"));
+    Serial.println(F("      2. ESP G  -> ADS GND & ADDR (Black wire)"));
+    Serial.println(F("      3. ESP D1 -> ADS SCL (Blue wire)"));
+    Serial.println(F("      4. ESP D2 -> ADS SDA (Green wire)"));
+  }
+
+  uint8_t targetAddr = (adsAddr != 0) ? adsAddr : 0x48;
+  if (ads.begin(targetAddr)) {
+    Serial.printf("[ADS1115] SUCCESS: Initialized at address 0x%02X!\n", targetAddr);
+    ads.setGain(GAIN_ONE); // +/- 4.096V range, 0.125 mV/count
     ads1115Found = true;
+    adsDetectedAddr = targetAddr;
   } else {
-    Serial.printf("[I2C] WARNING: ADS1115 NOT detected at 0x48 (error %d)!\n", i2cError);
-    Serial.println(F("      Verify wiring: D1 -> SCL, D2 -> SDA, ESP 3V -> VDD, G -> GND & ADDR"));
+    Serial.printf("[ADS1115] ERROR: Initialization failed at 0x%02X!\n", targetAddr);
     ads1115Found = false;
   }
 
@@ -316,32 +278,68 @@ void setup() {
 }
 
 // ==========================================
-// 9. MAIN LOOP (NON-BLOCKING millis() TIMER)
+// 8. MAIN LOOP (NON-BLOCKING 1-SECOND TIMER)
 // ==========================================
 void loop() {
   unsigned long now = millis();
 
+  // Exactly every 1000ms (1 second)
   if (now - lastSendTime >= SEND_INTERVAL_MS) {
     lastSendTime += SEND_INTERVAL_MS;
-    // Catch-up guard if network took slightly longer
     if (now - lastSendTime >= SEND_INTERVAL_MS) {
       lastSendTime = now;
     }
 
-    // 1. Read ADS1115 Channel A0 (TDS Meter) and Channel A1 (Turbidity Sensor)
-    float vTds  = readAverageADSVoltage(ADS_CH_TDS, 2);
-    float vTurb = readAverageADSVoltage(ADS_CH_TURBIDITY, 2);
+    float vTds  = 0.0f;
+    float vTurb = 0.0f;
+    int16_t rawTds = 0;
+    int16_t rawTurb = 0;
 
-    // 2. Compute Physical Values
+    // Auto-reconnect to ADS1115 if communication was lost
+    if (!ads1115Found) {
+      for (uint8_t a = 0x48; a <= 0x4B; a++) {
+        Wire.beginTransmission(a);
+        if (Wire.endTransmission() == 0) {
+          if (ads.begin(a)) {
+            ads.setGain(GAIN_ONE);
+            ads1115Found = true;
+            adsDetectedAddr = a;
+            Serial.printf("[ADS1115] Reconnected at 0x%02X!\n", a);
+            break;
+          }
+        }
+      }
+    }
+
+    if (ads1115Found) {
+      // Channel 0 = TDS Meter (Yellow Wire)
+      rawTds = ads.readADC_SingleEnded(ADS_CH_TDS);
+      vTds   = ads.computeVolts(rawTds);
+
+      // Channel 1 = Turbidity Sensor (Purple Wire)
+      rawTurb = ads.readADC_SingleEnded(ADS_CH_TURBIDITY);
+      vTurb   = ads.computeVolts(rawTurb);
+    } else {
+      Serial.println(F("[ADS1115] WARNING: ADS1115 offline (I2C no response)"));
+    }
+
+    // Compute Physical Values
     float tdsValue       = calculateTDS(vTds, DEFAULT_TEMPERATURE);
     float turbidityValue = calculateTurbidity(vTurb);
 
-    // 3. Print Local Diagnostics to Serial Monitor
+    // Print Local Diagnostics to Serial Monitor
     Serial.println(F("--------------------------------------------------"));
-    Serial.printf("[ADS1115] TDS (A0): %.3f V -> %.1f ppm  |  Turbidity (A1): %.3f V -> %.2f NTU\n",
-                  vTds, tdsValue, vTurb, turbidityValue);
+    Serial.printf("[ADS1115] Raw A0: %5d (%.3fV) -> TDS: %.1f ppm  |  Raw A1: %5d (%.3fV) -> Turbidity: %.2f NTU\n",
+                  rawTds, vTds, tdsValue, rawTurb, vTurb, turbidityValue);
 
-    // 4. Stream Telemetry to DROPLET Cloud Backend
+    if (vTds < 0.015f) {
+      Serial.println(F("   -> [TDS TIP] 0.0 ppm: Place the TDS probe in water to see reading rise!"));
+    }
+    if (vTurb < 0.05f) {
+      Serial.println(F("   -> [TURBIDITY TIP] 0.00 NTU: Verify blue adapter switch is on 'A' (Analog), NOT 'D'!"));
+    }
+
+    // Stream Telemetry to DROPLET Cloud Backend
     sendTelemetry(tdsValue, turbidityValue, DEFAULT_TEMPERATURE, DEFAULT_PH);
   }
 
