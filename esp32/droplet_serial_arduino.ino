@@ -45,6 +45,7 @@ float readVoltage(int pin) {
 }
 
 float calculateTDS(float voltage, float tempC) {
+  if (voltage < 0.05) return 0.0; // Probe in air / dry
   float coeff = 1.0 + 0.02 * (tempC - 25.0);
   float compV = voltage / coeff;
   float tds = (133.42 * pow(compV, 3) - 255.86 * pow(compV, 2) + 857.39 * compV) * 0.5;
@@ -57,6 +58,8 @@ float calculateTurbidity(float voltage) {
   float ntu = 0.0;
   if (voltage >= (VREF * 0.75)) {
     ntu = 0.5; // Clear water baseline
+  } else if (voltage < 0.05) {
+    ntu = 0.0; // Probe unpowered / disconnected
   } else {
     ntu = -1120.4 * pow(voltage, 2) + 5742.3 * voltage - 4352.9;
     if (ntu < 0.0) ntu = 0.0;
@@ -81,10 +84,13 @@ void loop() {
 
   float tdsVal = calculateTDS(vTds, DEFAULT_TEMPERATURE);
   float turbVal = calculateTurbidity(vTurb);
+  const float DEFAULT_PH = 7.0; // Neutral water baseline for ML model
 
   // Print strict JSON string per line for Python Serial Bridge:
   Serial.print("{\"device_id\":\"ESP32-WATER-001\",");
-  Serial.print("\"tds\":");
+  Serial.print("\"ph\":");
+  Serial.print(DEFAULT_PH, 1);
+  Serial.print(",\"tds\":");
   Serial.print(tdsVal, 1);
   Serial.print(",\"turbidity\":");
   Serial.print(turbVal, 2);
