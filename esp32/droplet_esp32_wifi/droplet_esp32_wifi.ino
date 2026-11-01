@@ -28,7 +28,7 @@
  *    - TDS Sensor VCC         -> 5V (VIN) or 3.3V
  *    - TDS Sensor GND         -> GND
  *    - Turbidity Sensor Signal-> GPIO 35 (ADC1_CH7)
- *    - Turbidity Sensor VCC   -> 5V (VIN)
+ *    - Turbidity Sensor VCC   -> 3V
  *    - Turbidity Sensor GND   -> GND
  *
  * ============================================================================
