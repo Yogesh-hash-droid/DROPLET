@@ -11,10 +11,11 @@
  *
  * 1. ESP8266 (NodeMCU 1.0 ESP-12E):
  *    - TDS Sensor Signal      -> Pin A0
- *    - TDS Sensor VCC         -> Pin VIN (5V from USB — DO NOT use 3V3!)
- *                               [IMPORTANT: 5V is REQUIRED for the probe's
- *                               onboard AC oscillator to run. On 3.3V, many
- *                               clone boards fail to oscillate and output 0V!]
+ *    - TDS Sensor VCC         -> Pin 3V3 (or VU / 3V)
+ *                               [NOTE: Do NOT use VIN! On NodeMCU boards powered via
+ *                               USB, the VIN pin is input-only (0V). Always connect
+ *                               VCC to 3V3 (or VU if your board has it) so the sensor
+ *                               is properly powered with its power LED ON.]
  *    - TDS Sensor GND         -> Pin GND
  *
  *    Optional Dual-Sensor on ESP8266 (Mode 3: SENSOR_MODE_DUAL_SWITCH):
