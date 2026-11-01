@@ -40,6 +40,7 @@ coverage/
 !ml/models/.gitkeep
 *.pkl
 *.h5
+certs/
 
 # OS / IDE
 .DS_Store

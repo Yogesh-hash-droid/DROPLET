@@ -62,7 +62,7 @@ The repository includes [`render.yaml`](../render.yaml). In Render:
    - `CORS_ORIGINS`: the final Vercel URL, for example
      `https://droplet.example.vercel.app`
    - `MYSQL_HOST`
-   - `MYSQL_PORT=3306`
+   - `MYSQL_PORT=15444`
    - `MYSQL_USER`
    - `MYSQL_PASSWORD`
    - `MYSQL_DATABASE`

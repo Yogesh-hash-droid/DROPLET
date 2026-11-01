@@ -30,7 +30,7 @@ band columns, and does not represent the current ORM model.
 |---|---|
 | `Device` | `devices` with `device_id` unique, source `SIMULATION`/`ESP32`/`ESP8266`, and `ONLINE`/`OFFLINE` status |
 | `WaterReading` | `water_readings` with required TDS/turbidity and nullable pH/temperature |
-| `Prediction` | `predictions` with nullable prediction/confidence/score method and one assessment per reading |
+| `Prediction` | `predictions` with nullable prediction/confidence values, a required nullable `score_method` column, and one assessment per reading |
 | `SystemConfig` | `system_config` with nullable legacy thresholds and non-null screening bands |
 
 ### Nullable two-sensor fields
@@ -112,12 +112,11 @@ Render must receive these values privately through `MYSQL_HOST`,
 `MYSQL_PORT=15444`, `MYSQL_USER`, `MYSQL_PASSWORD`, and
 `MYSQL_DATABASE=defaultdb`.
 
-The current `config.py` constructs a PyMySQL URL from `MYSQL_*`, but does not
-define an explicit CA-file or SSL options setting. Before connecting, confirm
-that the Aiven endpoint accepts the driver's default TLS negotiation. If Aiven
-requires a CA bundle or explicit SSL parameters, the deployment configuration
-must be extended before the first connection; no credentials or certificates
-belong in this repository.
+The current `config.py` constructs a PyMySQL URL from `MYSQL_*` and supports
+`MYSQL_SSL` plus the configurable `MYSQL_SSL_CA` path. When TLS is enabled, it
+creates a certificate-verifying context with hostname checking and
+`CERT_REQUIRED`. The CA certificate must be supplied privately at deployment
+time; no credentials or certificate contents belong in this repository.
 
 ## Approval gate
 
