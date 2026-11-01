@@ -1,6 +1,4 @@
-import json
 import logging
-import urllib.request
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -19,27 +17,11 @@ from app.schemas.water_reading import (
 )
 from app.services import config_service, quality_service, reading_service, safety_service
 
+from app.sse import publish_sync
+
 router = APIRouter(prefix="/readings", tags=["Readings"])
 settings = get_settings()
-relay_logger = logging.getLogger("app.relay")
 
-
-def _relay_reading_to_cloud(data_dict: dict):
-    """Relay reading from local receiver to Render cloud so Vercel updates in real time."""
-    cloud_url = "https://droplet-api-byl8.onrender.com/api/readings"
-    try:
-        if data_dict.get("ph") is None:
-            data_dict["ph"] = 7.0
-        payload = json.dumps(data_dict).encode("utf-8")
-        req = urllib.request.Request(
-            cloud_url,
-            data=payload,
-            headers={"Content-Type": "application/json", "User-Agent": "DROPLET-LocalRelay/1.0"}
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            relay_logger.info("Relayed reading to cloud Render: code %d", resp.status)
-    except Exception as exc:
-        relay_logger.debug("Cloud relay skipped/failed: %s", exc)
 
 
 # Display names for the DEPRECATED safety mirror only (the Parameter Rule Check
@@ -121,10 +103,6 @@ def create_reading_endpoint(
     and stored as NULL when absent (never fabricated).
     """
     try:
-        # Automatic cloud sync so Vercel updates in real time:
-        if settings.ENVIRONMENT != "production":
-            background_tasks.add_task(_relay_reading_to_cloud, reading_in.model_dump())
-
         reading, rule_res, screening_res, ml_res, ml_status, ml_status_reason = (
             reading_service.create_reading_with_assessment(
                 db=db,
@@ -139,7 +117,7 @@ def create_reading_endpoint(
             if param.status != "PASS"
         ]
 
-        return ReadingIngestionResponse(
+        ingestion_response = ReadingIngestionResponse(
             id=reading.id,
             reading_id=reading.id,
             device_id=reading.device_id,
@@ -170,6 +148,26 @@ def create_reading_endpoint(
             ml_status_reason=ml_status_reason,
             success=True
         )
+        # Broadcast to all connected SSE clients immediately (no-op if none connected).
+        background_tasks.add_task(
+            publish_sync,
+            {
+                "device_id": reading.device_id,
+                "tds": reading.tds,
+                "turbidity": reading.turbidity,
+                "ph": reading.ph,
+                "temperature": reading.temperature,
+                "source": reading.source.value,
+                "timestamp": reading.timestamp.isoformat() if reading.timestamp else None,
+                "quality_score": screening_res.overall_score,
+                "screening_status": screening_res.screening_status,
+                "safety_status": rule_res.storage_status.value,
+                "prediction": ml_res.prediction if ml_res else None,
+                "confidence": ml_res.confidence if ml_res else None,
+                "ml_status": ml_status,
+            }
+        )
+        return ingestion_response
     except HTTPException:
         raise
     except Exception as exc:

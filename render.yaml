@@ -3,7 +3,10 @@ services:
     name: droplet-api
     runtime: python
     rootDir: backend
-    buildCommand: pip install -r requirements.txt && python ../ml/train.py
+    # --simulated: generates WHO/BIS threshold dataset; model is saved at MODEL_PATH
+    # which persists for the life of the build image (survives restarts, not redeploys).
+    # On redeploy the build runs again and re-trains, so the model is always fresh.
+    buildCommand: pip install -r requirements.txt && python ../ml/train.py --simulated
 
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
@@ -30,3 +33,5 @@ services:
         sync: false
       - key: MODEL_PATH
         value: /opt/render/project/src/ml/models/water_potability_model.joblib
+      - key: METRICS_PATH
+        value: /opt/render/project/src/ml/models/model_metrics.json

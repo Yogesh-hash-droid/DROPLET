@@ -11,7 +11,15 @@ import MLVerdictCard from '../components/MLVerdictCard.jsx'
 import TrendChart from '../components/TrendChart.jsx'
 import { ErrorBanner, LoadingNote } from '../components/StatusBanner.jsx'
 
-export default function Dashboard({ latest, latestError, config, devices = [], devicesError }) {
+export default function Dashboard({
+  latest,
+  latestError,
+  config,
+  devices = [],
+  devicesError,
+  sseConnected,
+  lastUpdatedAt,
+}) {
   const [selectedKeys, setSelectedKeys] = useState(['tds', 'turbidity'])
   const history = usePolling(() => fetchHistory({ limit: 200 }), 10000)
   const deviceList = devices ?? []
@@ -24,10 +32,19 @@ export default function Dashboard({ latest, latestError, config, devices = [], d
       .filter(([, parameter]) => parameter.status !== 'PASS')
       .map(([key]) => key === 'tds' ? 'TDS' : 'Turbidity')
     : []
+
   const device = latest ? deviceList.find((item) => item.device_id === latest.device_id) : null
-  const latestAgeMs = latest?.timestamp ? Math.max(0, Date.now() - (parseUtcDate(latest.timestamp)?.getTime() || 0)) : Infinity
-  const isOnline = device?.status === 'ONLINE' || latestAgeMs <= 35000
+  const latestAgeMs = latest?.timestamp
+    ? Math.max(0, Date.now() - (parseUtcDate(latest.timestamp)?.getTime() || 0))
+    : Infinity
+
+  // ONLINE if server reports ONLINE, OR if we received a reading within 5 seconds
+  // (SSE-pushed data means the sensor is actively sending)
+  const isOnline = device?.status === 'ONLINE' || latestAgeMs <= 5000
   const effectiveLastSeen = latest?.timestamp || device?.last_seen
+
+  // "No data" state: reading older than 5 seconds (sensor may have gone offline)
+  const isStale = latestAgeMs > 5000 && latest !== null
 
   return (
     <div className="page">
@@ -38,13 +55,36 @@ export default function Dashboard({ latest, latestError, config, devices = [], d
       {devicesError && <ErrorBanner error={`devices: ${devicesError}`} />}
       <LoadingNote loading={!latest && !latestError} data={latest} />
 
+      {/* Connection status banner */}
+      <div className="connection-status-bar">
+        <span className={`sse-dot sse-dot--${sseConnected}`} />
+        <span className="muted">
+          {sseConnected === 'open'
+            ? 'Live stream connected'
+            : sseConnected === 'connecting'
+            ? 'Connecting to live stream…'
+            : 'Live stream offline — using polling fallback'}
+        </span>
+        {lastUpdatedAt && (
+          <span className="muted" style={{ marginLeft: 'auto' }}>
+            Last update: {timeAgo(lastUpdatedAt)}
+          </span>
+        )}
+      </div>
+
+      {isStale && (
+        <div className="stale-banner">
+          ⚠️ No new data for {Math.round(latestAgeMs / 1000)}s — sensor may be offline.
+        </div>
+      )}
+
       {latest && (
         <>
           <section className="dashboard-top">
             <div className="dashboard-top__meta">
               <h2>Latest Reading</h2>
               <p className="muted">
-                {latest.device_id} · <span className={`source-tag source-tag--${latest.source.toLowerCase()}`}>{latest.source}</span>{' '}
+                {latest.device_id} · <span className={`source-tag source-tag--${latest.source?.toLowerCase()}`}>{latest.source}</span>{' '}
                 · {formatTimestamp(latest.timestamp)} ({timeAgo(latest.timestamp)})
               </p>
             </div>

@@ -310,3 +310,50 @@ p { margin: 0; }
   .app-header__badges { justify-content: flex-start; }
   .sensor-card__number { font-size: 1.7rem; }
 }
+
+/* ---------- SSE / Real-time indicators ---------- */
+.sse-indicator { font-size: 0.75rem; }
+.sse-indicator--open   { color: var(--ok); }
+.sse-indicator--connecting { color: var(--warn); }
+.sse-indicator--closed,
+.sse-indicator--error  { color: var(--muted); }
+
+.sse-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.sse-dot--open        { background: var(--ok); box-shadow: 0 0 6px var(--ok); animation: pulse-green 2s infinite; }
+.sse-dot--connecting  { background: var(--warn); }
+.sse-dot--closed,
+.sse-dot--error       { background: var(--muted); }
+
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+/* ---------- Connection status bar ---------- */
+.connection-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+}
+
+/* ---------- Stale data banner ---------- */
+.stale-banner {
+  padding: 10px 14px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius);
+  color: var(--warn);
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
