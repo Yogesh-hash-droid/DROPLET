@@ -114,6 +114,6 @@
     "turbidity": 0.30276070148900225
   },
   "majority_baseline_accuracy": 0.6047,
-  "trained_at": "2026-10-06T14:30:11.465184+00:00",
+  "trained_at": "2026-11-01T15:18:13.269574+00:00",
   "disclaimer": "Prototype model - not a guarantee of drinking-water safety."
 }

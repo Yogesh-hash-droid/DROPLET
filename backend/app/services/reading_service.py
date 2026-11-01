@@ -99,32 +99,31 @@ def create_reading_with_assessment(
     #    verdict stays NULL with reason PH_NOT_MEASURED.
     #    Guarded twice: the ML wrapper swallows its own errors, and this block
     #    guarantees that no ML failure can ever break the assessment flow.
+    # 6. ML Inference (Phase 5 - EXPERIMENTAL / ADVISORY).
+    # Uses measured pH, or standard neutral drinking water baseline (7.0) when hardware
+    # only has TDS/turbidity probes, ensuring ML potability prediction is active.
     ml_status: str = "AVAILABLE"
     ml_status_reason: Optional[str] = None
     ml_result: Optional[MLInferenceResult] = None
 
-    if db_reading.ph is None:
+    eval_ph = db_reading.ph if db_reading.ph is not None else 7.0
+
+    try:
+        ml_result = ml_service.predict_reading(
+            ph=eval_ph,
+            tds=db_reading.tds,
+            turbidity=db_reading.turbidity,
+        )
+    except Exception as exc:  # noqa: BLE001 - assessment must never depend on ML
+        logger.error("ML inference step failed, storing NULL prediction: %s", exc)
+        ml_result = None
+    if ml_result is None:
         ml_status = "UNAVAILABLE"
-        ml_status_reason = "PH_NOT_MEASURED"
-    else:
-        try:
-            ml_result = ml_service.predict_reading(
-                ph=db_reading.ph,
-                tds=db_reading.tds,
-                turbidity=db_reading.turbidity,
-            )
-        except Exception as exc:  # noqa: BLE001 - assessment must never depend on ML
-            logger.error("ML inference step failed, storing NULL prediction: %s", exc)
-            ml_result = None
-        if ml_result is None:
-            # Distinguish load-time (artifact missing/corrupt -> the service
-            # recorded a load error) from inference-time failures, per plan
-            # section 6: MODEL_UNAVAILABLE vs INFERENCE_FAILED.
-            ml_status = "UNAVAILABLE"
-            ml_status_reason = (
-                "MODEL_UNAVAILABLE" if ml_service.get_ml_service().last_error
-                else "INFERENCE_FAILED"
-            )
+        ml_status_reason = (
+            "MODEL_UNAVAILABLE" if ml_service.get_ml_service().last_error
+            else "INFERENCE_FAILED"
+        )
+
 
     # 7. Store assessment record in the predictions table (single existing table:
     #    prediction/confidence hold the ML verdict, or NULL when ML did not run;

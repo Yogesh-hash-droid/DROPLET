@@ -1,7 +1,19 @@
+export function parseUtcDate(value) {
+  if (!value) return null
+  if (value instanceof Date) return value
+  let str = String(value).trim()
+  if (!str) return null
+  // If no timezone indicator (Z or +HH:MM/-HH:MM), treat as UTC timestamp
+  if (!str.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(str)) {
+    str += 'Z'
+  }
+  const d = new Date(str)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
 export function formatTimestamp(value) {
-  if (!value) return '—'
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return '—'
+  const d = parseUtcDate(value)
+  if (!d) return '—'
   return d.toLocaleString(undefined, {
     year: 'numeric',
     month: 'short',
@@ -13,10 +25,9 @@ export function formatTimestamp(value) {
 }
 
 export function timeAgo(value) {
-  if (!value) return 'never'
-  const then = new Date(value).getTime()
-  if (Number.isNaN(then)) return 'unknown'
-  const diff = Math.max(0, Date.now() - then)
+  const d = parseUtcDate(value)
+  if (!d) return 'never'
+  const diff = Math.max(0, Date.now() - d.getTime())
   const s = Math.floor(diff / 1000)
   if (s < 5) return 'just now'
   if (s < 60) return `${s}s ago`
@@ -26,6 +37,7 @@ export function timeAgo(value) {
   if (h < 24) return `${h}h ago`
   return `${Math.floor(h / 24)}d ago`
 }
+
 
 export function formatValue(value, decimals = 2) {
   if (value == null || Number.isNaN(Number(value))) return '—'

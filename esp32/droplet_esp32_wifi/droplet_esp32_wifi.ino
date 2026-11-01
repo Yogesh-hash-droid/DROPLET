@@ -124,10 +124,12 @@ void sendTelemetry(float tds, float turbidity, float tempC) {
   // TDS and Turbidity are required; temperature is optional.
   StaticJsonDocument<256> doc;
   doc["device_id"]   = DEVICE_ID;
+  doc["ph"]          = serialized(String(7.0, 1));        // Neutral water baseline for ML model
   doc["tds"]         = serialized(String(tds, 1));        // 1 decimal place (ppm)
   doc["turbidity"]   = serialized(String(turbidity, 2));  // 2 decimal places (NTU)
   doc["temperature"] = serialized(String(tempC, 1));
   doc["source"]      = SOURCE_TAG;
+
 
   String jsonPayload;
   serializeJson(doc, jsonPayload);

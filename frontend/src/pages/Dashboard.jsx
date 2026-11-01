@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { PARAMS } from '../utils/constants.js'
 import { usePolling } from '../hooks/usePolling.js'
 import { fetchHistory } from '../services/api.js'
-import { formatTimestamp, timeAgo } from '../utils/format.js'
+import { formatTimestamp, timeAgo, parseUtcDate } from '../utils/format.js'
+
 import SensorCard from '../components/SensorCard.jsx'
 import ScoreGauge from '../components/ScoreGauge.jsx'
 import SafetyPanel from '../components/SafetyPanel.jsx'
@@ -24,6 +25,9 @@ export default function Dashboard({ latest, latestError, config, devices = [], d
       .map(([key]) => key === 'tds' ? 'TDS' : 'Turbidity')
     : []
   const device = latest ? deviceList.find((item) => item.device_id === latest.device_id) : null
+  const latestAgeMs = latest?.timestamp ? Math.max(0, Date.now() - (parseUtcDate(latest.timestamp)?.getTime() || 0)) : Infinity
+  const isOnline = device?.status === 'ONLINE' || latestAgeMs <= 35000
+  const effectiveLastSeen = latest?.timestamp || device?.last_seen
 
   return (
     <div className="page">
@@ -49,13 +53,14 @@ export default function Dashboard({ latest, latestError, config, devices = [], d
           <section className="dashboard-status-row">
             <div className="info-panel dashboard-status-card">
               <span className="muted">Device connection</span>
-              <strong className={device?.status === 'ONLINE' ? 'text-ok' : 'text-warn'}>
-                {device?.status || 'UNKNOWN'}
+              <strong className={isOnline ? 'text-ok' : 'text-warn'}>
+                {isOnline ? 'ONLINE' : 'OFFLINE'}
               </strong>
               <span className="muted">
-                {device?.last_seen ? `last seen ${timeAgo(device.last_seen)}` : 'No device heartbeat available'}
+                {effectiveLastSeen ? `last seen ${timeAgo(effectiveLastSeen)}` : 'No device heartbeat available'}
               </span>
             </div>
+
             <div className="info-panel dashboard-status-card">
               <span className="muted">Screening status</span>
               <strong>{latest.screening_status || 'UNAVAILABLE'}</strong>
