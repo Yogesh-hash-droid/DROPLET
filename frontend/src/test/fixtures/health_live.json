@@ -1,0 +1,8 @@
+﻿{
+    "status":  "healthy",
+    "service":  "Smart Water Quality Monitoring API",
+    "database":  "connected",
+    "timestamp":  "2026-10-07T05:50:21.957338+00:00",
+    "environment":  "development",
+    "version":  "1.0.0"
+}

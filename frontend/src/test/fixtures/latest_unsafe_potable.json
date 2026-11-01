@@ -1,0 +1,15 @@
+﻿{
+    "device_id":  "P8-EDGE",
+    "ph":  7.0,
+    "tds":  200.0,
+    "turbidity":  1.0,
+    "temperature":  100.0,
+    "source":  "SIMULATION",
+    "id":  350,
+    "timestamp":  "2026-10-07T05:47:33",
+    "quality_score":  90.0,
+    "safety_status":  "UNSAFE",
+    "warning_message":  "Temperature (100.0 Â°C) is severely outside safe range [10.0 - 35.0 Â°C]",
+    "prediction":  "POTABLE",
+    "confidence":  0.574967
+}

@@ -1,0 +1,15 @@
+﻿{
+    "device_id":  "P8-EDGE",
+    "ph":  7.0,
+    "tds":  200.0,
+    "turbidity":  1.0,
+    "temperature":  25.0,
+    "source":  "SIMULATION",
+    "id":  351,
+    "timestamp":  "2026-10-07T05:47:34",
+    "quality_score":  100.0,
+    "safety_status":  "SAFE",
+    "warning_message":  null,
+    "prediction":  "POTABLE",
+    "confidence":  0.574967
+}
