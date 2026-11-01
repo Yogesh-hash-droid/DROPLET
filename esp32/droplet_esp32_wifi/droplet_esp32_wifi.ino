@@ -6,30 +6,26 @@
  * to the DROPLET FastAPI backend via HTTPS POST /api/readings.
  *
  * ============================================================================
- * HARDWARE WIRING GUIDE:
+ * ESP8266 (NodeMCU 1.0 ESP-12E) WIRING GUIDE:
  * ============================================================================
  *
- * 1. ESP8266 (NodeMCU 1.0 ESP-12E):
- *    - Power Pins (Both Sensors):
- *        * VCC -> Pin 3V3 (or VU if available). DO NOT USE VIN (VIN is 0V on USB power!)
- *        * GND -> Pin GND
- *    - Single Sensor on A0:
- *        * If testing TDS: Connect TDS Signal -> Pin A0 (set ESP8266_MODE MODE_TDS_ONLY)
- *        * If testing Turbidity: Connect Turbidity Signal -> Pin A0 (set ESP8266_MODE MODE_TURBIDITY_ONLY)
- *          [IMPORTANT: On the Turbidity adapter board, set the slide switch to 'A' (Analog), NOT 'D'!]
- *    - Dual Sensors on A0 (Mode 3: SENSOR_MODE_DUAL_SWITCH):
- *        * TDS VCC       -> Pin D5 (GPIO 14)
- *        * Turbidity VCC -> Pin D6 (GPIO 12)
- *        * Both Signals  -> Pin A0
- *        * Shared GND    -> Pin GND
+ * The ESP8266 has ONLY ONE analog pin: A0 (0V to 3.3V).
  *
- * 2. ESP32 DevKit V1:
- *    - TDS Sensor Signal      -> GPIO 34 (ADC1_CH6)
- *    - TDS Sensor VCC         -> 5V (VIN) or 3.3V
- *    - TDS Sensor GND         -> GND
- *    - Turbidity Sensor Signal-> GPIO 35 (ADC1_CH7)
- *    - Turbidity Sensor VCC   -> 3V
- *    - Turbidity Sensor GND   -> GND
+ * OPTION 1 — Dual Sensor Mode (Reads BOTH TDS & Turbidity on A0):
+ *   - TDS Sensor VCC         -> Pin D5 (GPIO 14)
+ *   - Turbidity Sensor VCC   -> Pin D6 (GPIO 12)
+ *   - Both Sensor GND wires  -> Pin GND
+ *   - Both Signal wires(AOUT)-> Pin A0 (connect both to A0)
+ *   - In code below: Set #define ESP8266_MODE MODE_DUAL_SWITCH
+ *     [The ESP8266 powers D5 to sample TDS, then powers D6 to sample Turbidity!]
+ *
+ * OPTION 2 — Single Sensor Testing (One sensor plugged directly into A0):
+ *   - Sensor VCC             -> Pin 3V3 (or VU if available). DO NOT use VIN!
+ *   - Sensor GND             -> Pin GND
+ *   - Sensor Signal          -> Pin A0
+ *   - If testing TDS: Set #define ESP8266_MODE MODE_TDS_ONLY
+ *   - If testing Turbidity: Set #define ESP8266_MODE MODE_TURBIDITY_ONLY
+ *     [IMPORTANT: On the Turbidity adapter board, set slide switch to 'A', NOT 'D'!]
  *
  * ============================================================================
  * HTTP RESPONSE CODES:
