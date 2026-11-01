@@ -44,6 +44,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -80,6 +81,17 @@ async def json_safe_request_validation_handler(request: Request, exc: RequestVal
     return JSONResponse(
         status_code=422,
         content={"detail": _json_safe_non_finite(jsonable_encoder(exc.errors()))},
+    )
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    """Ensure unhandled 500s return clean JSON and flow through CORSMiddleware."""
+    import logging
+    logging.exception(f"Unhandled exception on {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"},
     )
 
 

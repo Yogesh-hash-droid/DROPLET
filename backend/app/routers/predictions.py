@@ -44,13 +44,16 @@ def get_latest_prediction_endpoint(db: Session = Depends(get_db)):
         )
 
     reading = row.reading
+    pred_val = getattr(row.prediction, "value", str(row.prediction)) if row.prediction else None
+    safety_val = getattr(row.safety_status, "value", str(row.safety_status)) if row.safety_status else "SAFE"
+
     return LatestPredictionResponse(
         id=row.id,
         reading_id=row.reading_id,
-        prediction=row.prediction.value,
+        prediction=pred_val,
         confidence=confidence,
         quality_score=row.quality_score,
-        safety_status=row.safety_status.value,
+        safety_status=safety_val,
         warning_message=row.warning_message,
         input_features=(
             {"ph": reading.ph, "tds": reading.tds, "turbidity": reading.turbidity}

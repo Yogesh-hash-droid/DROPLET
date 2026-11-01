@@ -20,7 +20,7 @@ class LatestPredictionResponse(PredictionResponse):
     """Latest stored ML prediction (EXPERIMENTAL / ADVISORY)."""
 
     confidence: float = Field(..., ge=0.0, le=1.0, description="Model probability of `prediction`, 0-1")
-    input_features: Dict[str, float] = Field(
+    input_features: Dict[str, Optional[float]] = Field(
         default_factory=dict,
         description="Sensor values fed to the model (ph, tds, turbidity)",
     )

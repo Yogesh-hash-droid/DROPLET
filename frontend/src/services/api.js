@@ -49,6 +49,15 @@ export async function fetchHealth() {
   return data
 }
 
+export async function fetchMLStatus() {
+  let mlUrl = '/ml/status'
+  if (API_BASE_URL.startsWith('http://') || API_BASE_URL.startsWith('https://')) {
+    mlUrl = API_BASE_URL.replace(/\/api\/?$/, '') + '/ml/status'
+  }
+  const { data } = await axios.get(mlUrl, { timeout: 5000 })
+  return data
+}
+
 export function apiErrorMessage(error) {
   const detail = error?.response?.data?.detail
   if (typeof detail === 'string') return detail

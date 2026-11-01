@@ -54,7 +54,7 @@ def main(args=None) -> int:
 
     if is_simulated:
         print(f"Dataset          : SIMULATED (WHO/BIS threshold-derived, N={len(raw)})")
-        print("⚠️  LEAKAGE WARNING: labels derived from same thresholds used as features.")
+        print("[!] LEAKAGE WARNING: labels derived from same thresholds used as features.")
         print("   High accuracy (~95-98%) is expected but reflects threshold learning, NOT")
         print("   generalisation to unseen sensor noise distributions.")
         print("   This is labeled 'SIMULATED' on the dashboard. It is advisory only.")
@@ -112,9 +112,9 @@ def main(args=None) -> int:
     print("Test-set metrics (honest, test set never used for selection)")
     print(pipeline.format_metrics(metrics))
     if metrics["accuracy"] >= 0.90:
-        print(f"✅ Accuracy {metrics['accuracy']:.1%} meets 90% target")
+        print(f"[OK] Accuracy {metrics['accuracy']:.1%} meets 90% target")
     else:
-        print(f"⚠️  Accuracy {metrics['accuracy']:.1%} is below 90% target")
+        print(f"[!] Accuracy {metrics['accuracy']:.1%} is below 90% target")
         if not is_simulated:
             print("   Consider running with --simulated to use the WHO-threshold dataset.")
     print("-" * 70)
@@ -191,7 +191,7 @@ def main(args=None) -> int:
     print(f"Model saved       : {saved} ({saved.stat().st_size} bytes)")
     print(f"Metrics saved     : {metrics_path}")
     if is_simulated:
-        print("⚠️  DISCLAIMER: SIMULATED data — labels derived from WHO thresholds.")
+        print("[DISCLAIMER] SIMULATED data -- labels derived from WHO thresholds.")
         print("   Dashboard will show 'SIMULATED' clearly. Never present as real lab data.")
     return 0
 

@@ -12,6 +12,10 @@
       "destination": "https://droplet-api-byl8.onrender.com/health"
     },
     {
+      "source": "/ml/:path*",
+      "destination": "https://droplet-api-byl8.onrender.com/ml/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/"
     }

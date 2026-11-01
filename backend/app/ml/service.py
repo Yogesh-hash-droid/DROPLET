@@ -103,7 +103,15 @@ class MLInferenceService:
     """
 
     def __init__(self, model_path: Optional[str | Path] = None) -> None:
-        self._model_path = Path(model_path or get_settings().MODEL_PATH)
+        if model_path is not None:
+            self._model_path = Path(model_path)
+        else:
+            default_path = Path(get_settings().MODEL_PATH)
+            if not default_path.exists():
+                repo_artifact = Path(__file__).resolve().parents[3] / "ml" / "models" / "water_potability_model.joblib"
+                if repo_artifact.exists():
+                    default_path = repo_artifact
+            self._model_path = default_path
         self._lock = threading.Lock()
         self._payload: Optional[Dict[str, Any]] = None
         self._last_error: Optional[str] = None

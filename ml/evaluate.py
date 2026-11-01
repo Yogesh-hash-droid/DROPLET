@@ -32,8 +32,13 @@ def main() -> int:
     print(f"scikit-learn      : {payload.get('sklearn_version')} (runtime {__import__('sklearn').__version__})")
     print(f"Features          : {payload['feature_columns']}")
 
-    raw = pipeline.load_dataset()
-    clean, _report = pipeline.preprocess(raw)
+    is_simulated = payload.get("is_simulated", False)
+    if is_simulated:
+        raw = pipeline.generate_simulated_dataset(seed=payload.get("random_seed", pipeline.RANDOM_SEED))
+        clean, _report = pipeline.preprocess(raw, is_simulated=True)
+    else:
+        raw = pipeline.load_dataset()
+        clean, _report = pipeline.preprocess(raw, is_simulated=False)
     split = pipeline.split_data(clean, seed=payload.get("random_seed", pipeline.RANDOM_SEED))
 
     train_set = set(split["train_indices"])

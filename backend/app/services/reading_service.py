@@ -106,23 +106,25 @@ def create_reading_with_assessment(
     ml_status_reason: Optional[str] = None
     ml_result: Optional[MLInferenceResult] = None
 
-    eval_ph = db_reading.ph if db_reading.ph is not None else 7.0
-
-    try:
-        ml_result = ml_service.predict_reading(
-            ph=eval_ph,
-            tds=db_reading.tds,
-            turbidity=db_reading.turbidity,
-        )
-    except Exception as exc:  # noqa: BLE001 - assessment must never depend on ML
-        logger.error("ML inference step failed, storing NULL prediction: %s", exc)
-        ml_result = None
-    if ml_result is None:
+    if db_reading.ph is None:
         ml_status = "UNAVAILABLE"
-        ml_status_reason = (
-            "MODEL_UNAVAILABLE" if ml_service.get_ml_service().last_error
-            else "INFERENCE_FAILED"
-        )
+        ml_status_reason = "PH_NOT_MEASURED"
+    else:
+        try:
+            ml_result = ml_service.predict_reading(
+                ph=db_reading.ph,
+                tds=db_reading.tds,
+                turbidity=db_reading.turbidity,
+            )
+        except Exception as exc:  # noqa: BLE001 - assessment must never depend on ML
+            logger.error("ML inference step failed, storing NULL prediction: %s", exc)
+            ml_result = None
+        if ml_result is None:
+            ml_status = "UNAVAILABLE"
+            ml_status_reason = (
+                "MODEL_UNAVAILABLE" if ml_service.get_ml_service().last_error
+                else "INFERENCE_FAILED"
+            )
 
 
     # 7. Store assessment record in the predictions table (single existing table:

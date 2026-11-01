@@ -481,8 +481,8 @@ def train(
         for column, value in zip(FEATURE_COLUMNS, fi)
     }
 
-    # For backward-compat: expose selected_params as a flat dict
-    selected_params_flat = {**best_trial["params"], "model_type": best_trial["model_type"]}
+    # Expose selected_params as winning_params (matching CANDIDATE_MODELS entry)
+    selected_params_flat = winning_params
 
     return {
         "model": model,
