@@ -15,7 +15,7 @@ export default function App() {
   const { data: sseData, connected: sseConnected, lastEvent: sseLastEvent } = useSSE()
 
   // HTTP polling: fallback and for endpoints with no SSE equivalent
-  const polledLatest = usePolling(fetchLatestReading, 2000)  // 2s fallback poll
+  const polledLatest = usePolling(fetchLatestReading, 1000)  // 1s fallback poll for 1-second updates
   const health  = usePolling(fetchHealth, 15000)
   const devices = usePolling(fetchDevices, 5000)   // 5s to catch ONLINE→OFFLINE quickly
   const config  = usePolling(fetchConfig, 60000)

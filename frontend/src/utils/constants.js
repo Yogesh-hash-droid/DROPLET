@@ -21,5 +21,5 @@ export const SAFETY_COLORS = {
 export const ML_DISCLAIMER =
   'EXPERIMENTAL / ADVISORY ML prediction from a weak prototype model (test ROC-AUC 0.5522, POTABLE recall 0.0864). It is NOT a guarantee that water is safe to drink and it never overrides the Safety Rule Engine.'
 
-export const POLL_INTERVAL_MS = 5000
-export const HISTORY_POLL_INTERVAL_MS = 10000
+export const POLL_INTERVAL_MS = 1000
+export const HISTORY_POLL_INTERVAL_MS = 5000

@@ -91,8 +91,9 @@ HTTPClient       httpClient;
  * PGA Gain set to +/-4.096V (FS), giving 0.125 mV (0.000125V) per LSB.
  */
 float readADS1115Voltage(uint8_t channel, int16_t &outRaw) {
-  // Config: OS=1 (start), PGA=+/-4.096V (0x0200), MODE=Single-Shot (0x0100), DR=128SPS (0x0080), COMP_DIS=0x0003
-  uint16_t config = 0x8000 | 0x0200 | 0x0100 | 0x0080 | 0x0003;
+  // Config: OS=1 (start), PGA=+/-4.096V (0x0200), MODE=Single-Shot (0x0100), DR=860SPS (0x00E0), COMP_DIS=0x0003
+  // 860 Samples Per Second = 1.16ms conversion time!
+  uint16_t config = 0x8000 | 0x0200 | 0x0100 | 0x00E0 | 0x0003;
 
   if (channel == 0)      config |= 0x4000; // AIN0 vs GND (TDS)
   else if (channel == 1) config |= 0x5000; // AIN1 vs GND (Turbidity)
@@ -106,8 +107,8 @@ float readADS1115Voltage(uint8_t channel, int16_t &outRaw) {
   Wire.write((uint8_t)(config & 0xFF));
   Wire.endTransmission();
 
-  // Wait for 16-bit conversion (128 SPS = ~8ms)
-  delay(9);
+  // Fast 16-bit conversion at 860 SPS (1.16ms conversion)
+  delay(2);
 
   // Point to Conversion Register (0x00)
   Wire.beginTransmission(ADS1115_I2C_ADDR);
@@ -129,13 +130,13 @@ float readADS1115Voltage(uint8_t channel, int16_t &outRaw) {
   return 0.0f;
 }
 
-// Average multiple ADS1115 samples for ultra-clean filtering
-float readAverageADSVoltage(uint8_t channel, int samples = 5) {
+// Fast ADS1115 reading (takes only 4ms per channel)
+float readAverageADSVoltage(uint8_t channel, int samples = 2) {
   float sum = 0.0f;
   int16_t dummyRaw;
   for (int i = 0; i < samples; i++) {
     sum += readADS1115Voltage(channel, dummyRaw);
-    delay(2);
+    delay(1);
   }
   return sum / (float)samples;
 }
@@ -321,11 +322,15 @@ void loop() {
   unsigned long now = millis();
 
   if (now - lastSendTime >= SEND_INTERVAL_MS) {
-    lastSendTime = now;
+    lastSendTime += SEND_INTERVAL_MS;
+    // Catch-up guard if network took slightly longer
+    if (now - lastSendTime >= SEND_INTERVAL_MS) {
+      lastSendTime = now;
+    }
 
     // 1. Read ADS1115 Channel A0 (TDS Meter) and Channel A1 (Turbidity Sensor)
-    float vTds  = readAverageADSVoltage(ADS_CH_TDS, 5);
-    float vTurb = readAverageADSVoltage(ADS_CH_TURBIDITY, 5);
+    float vTds  = readAverageADSVoltage(ADS_CH_TDS, 2);
+    float vTurb = readAverageADSVoltage(ADS_CH_TURBIDITY, 2);
 
     // 2. Compute Physical Values
     float tdsValue       = calculateTDS(vTds, DEFAULT_TEMPERATURE);
