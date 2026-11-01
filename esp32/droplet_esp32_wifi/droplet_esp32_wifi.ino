@@ -1,81 +1,32 @@
 /*
  * DROPLET - Smart Water Quality Monitoring System
- * Universal Wi-Fi Telemetry Firmware for ESP8266 (NodeMCU) & ESP32
+ * Dedicated Wi-Fi Telemetry Firmware for ESP8266 (NodeMCU 1.0 ESP-12E)
  *
  * Reads physical water sensors and streams real-time readings
  * to the DROPLET FastAPI backend via HTTPS POST /api/readings.
  *
  * ============================================================================
- * ESP8266 (NodeMCU 1.0 ESP-12E) WIRING GUIDE:
+ * WIRING GUIDE FOR NODEMCU (ESP8266):
  * ============================================================================
  *
- * The ESP8266 has ONLY ONE analog pin: A0 (0V to 3.3V).
+ * Sensor Power (Both TDS and Turbidity):
+ *   - VCC -> Connect to 3V3 (or VU / 3V pin). DO NOT use VIN (VIN is 0V on USB!)
+ *   - GND -> Connect to GND
  *
- * OPTION 1 — Dual Sensor Mode (Reads BOTH TDS & Turbidity on A0):
- *   - TDS Sensor VCC         -> Pin D5 (GPIO 14)
- *   - Turbidity Sensor VCC   -> Pin D6 (GPIO 12)
- *   - Both Sensor GND wires  -> Pin GND
- *   - Both Signal wires(AOUT)-> Pin A0 (connect both to A0)
- *   - In code below: Set #define ESP8266_MODE MODE_DUAL_SWITCH
- *     [The ESP8266 powers D5 to sample TDS, then powers D6 to sample Turbidity!]
+ * Sensor Signals:
+ *   - Analog Out -> Connect to Pin A0
+ *   - On the Turbidity module, set the physical slide switch to 'A' (Analog)!
  *
- * OPTION 2 — Single Sensor Testing (One sensor plugged directly into A0):
- *   - Sensor VCC             -> Pin 3V3 (or VU if available). DO NOT use VIN!
- *   - Sensor GND             -> Pin GND
- *   - Sensor Signal          -> Pin A0
- *   - If testing TDS: Set #define ESP8266_MODE MODE_TDS_ONLY
- *   - If testing Turbidity: Set #define ESP8266_MODE MODE_TURBIDITY_ONLY
- *     [IMPORTANT: On the Turbidity adapter board, set slide switch to 'A', NOT 'D'!]
- *
- * ============================================================================
- * HTTP RESPONSE CODES:
- *   201 Created       = Reading accepted, stored, rules evaluated, ML predicted
- *   200 OK            = Success
- *   -1 (conn failed)  = DNS or TLS handshake fail (Render waking up)
- *   -11 (timeout)     = Backend slow or cold start
  * ============================================================================
  */
 
-// ==========================================
-// 1. BOARD ARCHITECTURE DETECTION & INCLUDES
-// ==========================================
-#if defined(ESP32)
-  #include <WiFi.h>
-  #include <HTTPClient.h>
-  #include <WiFiClientSecure.h>
-  #include <ArduinoJson.h>
-
-  #define BOARD_NAME         "ESP32 DevKit"
-  #define DEFAULT_DEVICE_ID  "ESP32-WATER-001"
-  #define DEFAULT_SOURCE_TAG "ESP32"
-
-  #define PIN_TDS            34   // ADC1 Channel 6
-  #define PIN_TURBIDITY      35   // ADC1 Channel 7
-  #define ADC_MAX            4095.0f
-  #define VREF               3.3f
-
-#elif defined(ESP8266)
-  #include <ESP8266WiFi.h>
-  #include <ESP8266HTTPClient.h>
-  #include <WiFiClientSecure.h>
-  #include <ArduinoJson.h>
-
-  #define BOARD_NAME         "NodeMCU ESP8266"
-  #define DEFAULT_DEVICE_ID  "ESP8266-WATER-001"
-  #define DEFAULT_SOURCE_TAG "ESP8266"
-
-  #define PIN_ANALOG_A0      A0
-  #define PIN_TDS_POWER      14   // NodeMCU pin D5 (for dual-switch mode)
-  #define PIN_TURB_POWER     12   // NodeMCU pin D6 (for dual-switch mode)
-  #define ADC_MAX            1023.0f
-  #define VREF               3.3f
-
-#else
-  #error "Unsupported microcontroller. This firmware supports ESP8266 and ESP32."
-#endif
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
 
 // ==========================================
-// 2. WI-FI & BACKEND CONFIGURATION
+// 1. WI-FI & BACKEND CONFIGURATION
 // ==========================================
 const char* WIFI_SSID     = "Airtel_kaya_7448";
 const char* WIFI_PASSWORD = "Air@84151";
@@ -83,40 +34,27 @@ const char* WIFI_PASSWORD = "Air@84151";
 // Public Render HTTPS API URL (no trailing slash)
 const char* BACKEND_URL   = "https://droplet-api-byl8.onrender.com/api/readings";
 
-const char* DEVICE_ID     = DEFAULT_DEVICE_ID;
-const char* SOURCE_TAG    = DEFAULT_SOURCE_TAG;
+const char* DEVICE_ID     = "ESP8266-WATER-001";
+const char* SOURCE_TAG    = "ESP8266";
 
 // ==========================================
-// 3. ESP8266 SENSOR SELECTION MODE
-// ==========================================
-// Mode 1: TDS sensor on A0. Turbidity reports clean baseline (0.50 NTU).
-// Mode 2: Turbidity sensor on A0. TDS reports clean tap baseline (150.0 ppm).
-// Mode 3: Dual sensors on single A0 switched via GPIO pins D5 and D6.
-#define MODE_TDS_ONLY        1
-#define MODE_TURBIDITY_ONLY  2
-#define MODE_DUAL_SWITCH     3
-
-// Set your active ESP8266 hardware wiring mode here:
-#define ESP8266_MODE         MODE_TDS_ONLY
-
-// ==========================================
-// 4. TIMING & SAMPLING CONSTANTS
+// 2. TIMING & SAMPLING CONSTANTS
 // ==========================================
 const unsigned long SEND_INTERVAL_MS    = 1000;   // 1 reading per second
 const unsigned long WIFI_RETRY_MS       = 5000;   // Retry WiFi reconnect every 5s
 const unsigned long HTTP_TIMEOUT_MS     = 15000;  // 15s timeout
 const unsigned long COLD_START_EXTRA_MS = 25000;  // 25s for first request (cold start)
-const int           NUM_ADC_SAMPLES     = 10;     // 10 samples x 1ms = 10ms sampling
 
-// Nominal reference values when specific sensors are not physically attached
-const float DEFAULT_TEMPERATURE = 25.0f;  // Standard reference temperature (°C)
-const float DEFAULT_PH          = 7.0f;   // Neutral drinking water baseline (activates ML)
+#define ANALOG_PIN        A0
+#define VREF              3.3f
+#define ADC_RESOLUTION    1023.0f
+#define NUM_SAMPLES       30     // 30 samples x 5ms = 150ms stable window (filters RF noise)
 
-// Optional calibration factor (adjust if reading against a calibrated meter)
-const float TDS_CALIBRATION_K   = 1.0f;
+const float DEFAULT_TEMPERATURE = 25.0f;  // °C
+const float DEFAULT_PH          = 7.0f;   // Neutral water baseline (activates ML Potability model)
 
 // ==========================================
-// 5. GLOBAL STATE & CLIENTS
+// 3. GLOBAL STATE & CLIENTS
 // ==========================================
 unsigned long lastSendTime    = 0;
 unsigned long lastWifiRetry   = 0;
@@ -127,67 +65,53 @@ WiFiClientSecure secureClient;
 HTTPClient       httpClient;
 
 // ==========================================
-// 6. SENSOR MEASUREMENT & CALCULATION FUNCTIONS
+// 4. SENSOR CALCULATION FUNCTIONS
 // ==========================================
 
-/**
- * Read average analog voltage from a specified pin.
- * Also returns the raw integer ADC count for serial diagnostics.
- */
-float readAnalogVoltage(int pin, int &rawADC) {
-  long sum = 0;
-  for (int i = 0; i < NUM_ADC_SAMPLES; i++) {
+// Read analog pin A0 with multi-sample averaging (eliminates electrical jitter)
+float readAverageVoltage(int pin) {
+  float sum = 0.0f;
+  for (int i = 0; i < NUM_SAMPLES; i++) {
     sum += analogRead(pin);
-    delay(1);
+    delay(5);  // 5ms delay between samples
   }
-  rawADC = (int)(sum / NUM_ADC_SAMPLES);
-  return ((float)rawADC / ADC_MAX) * VREF;
+  float avgRaw = sum / (float)NUM_SAMPLES;
+  return (avgRaw / ADC_RESOLUTION) * VREF;
 }
 
-/**
- * Standard Gravity Analog TDS calculation polynomial.
- * Includes dry-probe zero-clamping (< 0.05V) and temperature compensation.
- */
+// Standard Gravity Analog TDS formula (temperature compensated)
 float calculateTDS(float voltage, float tempC) {
-  // If voltage is very low, probe is dry in air or disconnected.
-  // Clamp to 0.0 ppm to eliminate false ~10.8 ppm ADC noise.
-  if (voltage < 0.05f) {
-    return 0.0f;
-  }
-
-  // Temperature compensation to 25.0 °C
   float compensationCoefficient = 1.0f + 0.02f * (tempC - 25.0f);
   float compensationVoltage     = voltage / compensationCoefficient;
 
-  // DFRobot Gravity TDS 3rd-order polynomial
   float tds = (133.42f * powf(compensationVoltage, 3)
              - 255.86f * powf(compensationVoltage, 2)
              + 857.39f * compensationVoltage) * 0.5f;
 
-  tds *= TDS_CALIBRATION_K;
-  return max(tds, 0.0f);
+  if (tds < 0.0f) tds = 0.0f;
+  return tds;
 }
 
-/**
- * Turbidity calculation (0 to 3000 NTU).
- * In clean water, optical sensor outputs high voltage (~3.0 - 4.2V).
- * As water clouds up, voltage drops.
- */
+// Convert Voltage to Turbidity (NTU)
+// In clean water: voltage is high (~2.5V - 3.3V) -> low turbidity (~0.5 NTU)
+// In cloudy/murky water: voltage drops -> turbidity increases
 float calculateTurbidity(float voltage) {
+  float ntu = 0.0f;
   if (voltage >= (VREF * 0.75f)) {
-    return 0.50f;  // Clean clear water nominal baseline
+    // Clear water zone (approx 0 - 5 NTU)
+    ntu = (VREF - voltage) * 10.0f;
+    if (ntu < 0.50f) ntu = 0.50f; // Clean baseline
+  } else {
+    // Turbid water zone: quadratic characteristic curve
+    ntu = -1120.4f * powf(voltage, 2) + 5742.3f * voltage - 4352.9f;
+    if (ntu < 0.0f) ntu = 0.0f;
+    if (ntu > 3000.0f) ntu = 3000.0f;
   }
-  if (voltage < 0.05f) {
-    return 0.0f;   // Probe disconnected or unpowered
-  }
-
-  // Quadratic conversion curve: NTU = -1120.4*V^2 + 5742.3*V - 4352.9
-  float ntu = -1120.4f * powf(voltage, 2) + 5742.3f * voltage - 4352.9f;
-  return constrain(ntu, 0.0f, 3000.0f);
+  return ntu;
 }
 
 // ==========================================
-// 7. WI-FI CONNECTION MANAGEMENT
+// 5. WI-FI MANAGEMENT
 // ==========================================
 bool ensureWiFi() {
   if (WiFi.status() == WL_CONNECTED) return true;
@@ -196,28 +120,28 @@ bool ensureWiFi() {
   if (now - lastWifiRetry < WIFI_RETRY_MS) return false;
   lastWifiRetry = now;
 
-  Serial.println(F("[WiFi] Connection lost. Reconnecting..."));
+  Serial.println(F("[WiFi] Disconnected. Reconnecting..."));
   WiFi.disconnect();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   return false;
 }
 
 // ==========================================
-// 8. TELEMETRY TRANSMISSION (PERSISTENT HTTPS)
+// 6. TELEMETRY TRANSMISSION (PERSISTENT HTTPS)
 // ==========================================
 void sendTelemetry(float tds, float turbidity, float tempC, float phVal) {
   if (!ensureWiFi()) {
-    Serial.println(F("[HTTP] Postponed — WiFi connecting..."));
+    Serial.println(F("[HTTP] Skipping — WiFi not connected"));
     return;
   }
 
-  // Build JSON payload matching FastAPI WaterReadingCreate schema
+  // Build JSON payload matching DROPLET API schema
   StaticJsonDocument<256> doc;
   doc["device_id"]   = DEVICE_ID;
-  doc["ph"]          = round(phVal * 10.0f) / 10.0f;       // Enables ML Potability prediction!
-  doc["tds"]         = round(tds * 10.0f) / 10.0f;         // 1 decimal place (ppm)
-  doc["turbidity"]   = round(turbidity * 100.0f) / 100.0f; // 2 decimal places (NTU)
-  doc["temperature"] = round(tempC * 10.0f) / 10.0f;       // 1 decimal place (°C)
+  doc["ph"]          = round(phVal * 10.0f) / 10.0f;       // Activates ML model
+  doc["tds"]         = round(tds * 10.0f) / 10.0f;         // 1 dp (ppm)
+  doc["turbidity"]   = round(turbidity * 100.0f) / 100.0f; // 2 dp (NTU)
+  doc["temperature"] = round(tempC * 10.0f) / 10.0f;       // 1 dp (°C)
   doc["source"]      = SOURCE_TAG;
 
   String jsonPayload;
@@ -225,17 +149,17 @@ void sendTelemetry(float tds, float turbidity, float tempC, float phVal) {
 
   // Initialize or re-establish TLS session if disconnected
   if (!isHttpConnected || !httpClient.connected()) {
-    Serial.println(F("[HTTP] Establishing TLS keep-alive session..."));
-    secureClient.setInsecure();  // Bypass certificate validation for cloud IoT
+    Serial.println(F("[HTTP] Connecting TLS session (keep-alive)..."));
+    secureClient.setInsecure();  // Bypass certificate fingerprint on ESP8266
     secureClient.setBufferSizes(2048, 512); // Conserve RAM
     httpClient.begin(secureClient, BACKEND_URL);
     httpClient.setTimeout(firstRequest ? COLD_START_EXTRA_MS : HTTP_TIMEOUT_MS);
-    httpClient.setReuse(true);  // Keep connection open across 1-second ticks
+    httpClient.setReuse(true);  // Keep connection open for 1s loop
     isHttpConnected = true;
   }
 
   httpClient.addHeader(F("Content-Type"), F("application/json"));
-  httpClient.addHeader(F("User-Agent"),   F("ESP-DROPLET/2.1"));
+  httpClient.addHeader(F("User-Agent"),   F("ESP8266-DROPLET/2.2"));
   httpClient.addHeader(F("Accept"),       F("application/json"));
   httpClient.addHeader(F("Connection"),   F("keep-alive"));
 
@@ -250,14 +174,14 @@ void sendTelemetry(float tds, float turbidity, float tempC, float phVal) {
     if (httpCode == HTTP_CODE_CREATED || httpCode == HTTP_CODE_OK) {
       String resp = httpClient.getString();
       Serial.printf("[HTTP POST] OK (%d bytes response, keep-alive active)\n", resp.length());
-      // Do NOT call httpClient.end() here to keep socket open for 1s loop!
+      // Keep connection open across 1-second ticks
     } else {
-      Serial.printf("[HTTP POST] Server response %d. Re-establishing socket.\n", httpCode);
+      Serial.printf("[HTTP POST] Server response %d. Reconnecting.\n", httpCode);
       httpClient.end();
       isHttpConnected = false;
     }
   } else {
-    Serial.printf("[HTTP POST] Network/TLS error %d: %s\n",
+    Serial.printf("[HTTP POST] Connection error %d: %s\n",
                   httpCode, httpClient.errorToString(httpCode).c_str());
     httpClient.end();
     isHttpConnected = false;
@@ -265,41 +189,20 @@ void sendTelemetry(float tds, float turbidity, float tempC, float phVal) {
 }
 
 // ==========================================
-// 9. SETUP
+// 7. SETUP
 // ==========================================
 void setup() {
   Serial.begin(115200);
-  delay(600);
+  delay(1000);
 
   Serial.println(F("\n=============================================="));
-  Serial.printf("  DROPLET Water Telemetry - %s v2.1\n", BOARD_NAME);
+  Serial.println(F("  DROPLET Water Telemetry - NodeMCU ESP8266   "));
   Serial.println(F("=============================================="));
   Serial.printf("[Config] Backend URL: %s\n", BACKEND_URL);
   Serial.printf("[Config] Device ID  : %s\n", DEVICE_ID);
-  Serial.printf("[Config] Interval   : %lums\n", SEND_INTERVAL_MS);
+  Serial.printf("[Config] Interval   : %lums (1 reading/second)\n", SEND_INTERVAL_MS);
 
-#if defined(ESP32)
-  analogReadResolution(12);
-  analogSetAttenuation(ADC_11db); // 0V - 3.3V range
-  pinMode(PIN_TDS, INPUT);
-  pinMode(PIN_TURBIDITY, INPUT);
-  Serial.println(F("[Hardware] Dual-ADC Active: GPIO 34 (TDS) & GPIO 35 (Turbidity)"));
-
-#elif defined(ESP8266)
-  pinMode(PIN_ANALOG_A0, INPUT);
-  #if (ESP8266_MODE == MODE_DUAL_SWITCH)
-    pinMode(PIN_TDS_POWER, OUTPUT);
-    pinMode(PIN_TURB_POWER, OUTPUT);
-    digitalWrite(PIN_TDS_POWER, LOW);
-    digitalWrite(PIN_TURB_POWER, LOW);
-    Serial.println(F("[Hardware] Dual-Switch Mode: D5 (TDS Power) & D6 (Turb Power) on A0"));
-  #elif (ESP8266_MODE == MODE_TURBIDITY_ONLY)
-    Serial.println(F("[Hardware] Single-Sensor Mode: Turbidity Probe on A0"));
-  #else
-    Serial.println(F("[Hardware] Single-Sensor Mode: TDS Probe on A0"));
-    Serial.println(F("[Notice] Connect TDS VCC to VIN (5V) so AC oscillator runs!"));
-  #endif
-#endif
+  pinMode(ANALOG_PIN, INPUT);
 
   // Connect to Wi-Fi
   Serial.printf("[WiFi] Connecting to %s ", WIFI_SSID);
@@ -317,14 +220,14 @@ void setup() {
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println(F("[WiFi] Connected successfully!"));
-    Serial.printf("[WiFi] IP Address: %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("[WiFi] NodeMCU IP: %s\n", WiFi.localIP().toString().c_str());
   } else {
-    Serial.println(F("[WiFi] Not connected at boot — will retry automatically"));
+    Serial.println(F("[WiFi] Connection pending. Retrying in loop..."));
   }
 }
 
 // ==========================================
-// 10. MAIN LOOP (NON-BLOCKING millis() TIMER)
+// 8. MAIN LOOP (NON-BLOCKING millis() TIMER)
 // ==========================================
 void loop() {
   unsigned long now = millis();
@@ -332,81 +235,21 @@ void loop() {
   if (now - lastSendTime >= SEND_INTERVAL_MS) {
     lastSendTime = now;
 
-    float tdsVal   = 0.0f;
-    float turbVal  = 0.50f;
-    float tempC    = DEFAULT_TEMPERATURE;
-    float phVal    = DEFAULT_PH;
+    // 1. Read Analog Voltage from A0
+    float a0Voltage = readAverageVoltage(ANALOG_PIN);
 
-    int rawTds  = 0;
-    int rawTurb = 0;
-    float vTds  = 0.0f;
-    float vTurb = 0.0f;
+    // 2. Compute Physical Values
+    float tdsValue = calculateTDS(a0Voltage, DEFAULT_TEMPERATURE);
+    float turbidityValue = calculateTurbidity(a0Voltage);
 
-#if defined(ESP32)
-    // ESP32: Read both ADC channels simultaneously
-    vTds   = readAnalogVoltage(PIN_TDS, rawTds);
-    vTurb  = readAnalogVoltage(PIN_TURBIDITY, rawTurb);
-    tdsVal = calculateTDS(vTds, tempC);
-    turbVal = calculateTurbidity(vTurb);
-
-#elif defined(ESP8266)
-  #if (ESP8266_MODE == MODE_DUAL_SWITCH)
-    // Power TDS sensor, sample A0, power down
-    digitalWrite(PIN_TDS_POWER, HIGH);
-    digitalWrite(PIN_TURB_POWER, LOW);
-    delay(15);
-    vTds = readAnalogVoltage(PIN_ANALOG_A0, rawTds);
-    digitalWrite(PIN_TDS_POWER, LOW);
-
-    // Power Turbidity sensor, sample A0, power down
-    digitalWrite(PIN_TURB_POWER, HIGH);
-    delay(15);
-    vTurb = readAnalogVoltage(PIN_ANALOG_A0, rawTurb);
-    digitalWrite(PIN_TURB_POWER, LOW);
-
-    tdsVal  = calculateTDS(vTds, tempC);
-    turbVal = calculateTurbidity(vTurb);
-
-  #elif (ESP8266_MODE == MODE_TURBIDITY_ONLY)
-    // A0 is Turbidity sensor
-    vTurb   = readAnalogVoltage(PIN_ANALOG_A0, rawTurb);
-    turbVal = calculateTurbidity(vTurb);
-    tdsVal  = 150.0f; // Baseline tap water TDS
-
-  #else // MODE_TDS_ONLY (Default)
-    // A0 is TDS sensor
-    vTds    = readAnalogVoltage(PIN_ANALOG_A0, rawTds);
-    tdsVal  = calculateTDS(vTds, tempC);
-    turbVal = 0.50f;  // Baseline clear water turbidity
-  #endif
-#endif
-
-    // Print clear diagnostic inspection output to Arduino Serial Monitor:
+    // 3. Print Local Diagnostics to Serial Monitor
     Serial.println(F("--------------------------------------------------"));
-#if defined(ESP32) || (defined(ESP8266) && ESP8266_MODE == MODE_DUAL_SWITCH)
-    Serial.printf("[ADC]  TDS Raw: %4d (%.3fV)  |  Turbidity Raw: %4d (%.3fV)\n",
-                  rawTds, vTds, rawTurb, vTurb);
-#elif (defined(ESP8266) && ESP8266_MODE == MODE_TURBIDITY_ONLY)
-    Serial.printf("[ADC]  A0 Raw: %4d / %d  |  Voltage: %.3f V (Turbidity Probe)\n",
-                  rawTurb, (int)ADC_MAX, vTurb);
-#else
-    Serial.printf("[ADC]  A0 Raw: %4d / %d  |  Voltage: %.3f V (TDS Probe)\n",
-                  rawTds, (int)ADC_MAX, vTds);
-#endif
+    Serial.printf("[SENSORS] A0 Voltage: %.3f V  |  TDS: %.1f ppm  |  Turbidity: %.2f NTU\n",
+                  a0Voltage, tdsValue, turbidityValue);
 
-    Serial.printf("[DATA] TDS: %.1f ppm  |  Turbidity: %.2f NTU  |  pH: %.1f  |  Temp: %.1f C\n",
-                  tdsVal, turbVal, phVal, tempC);
-
-    if (vTds < 0.05f && (vTurb == 0.0f || vTurb < 0.05f)) {
-      Serial.println(F("[INFO] Probe in AIR / DRY (0.0 ppm). Dip probe into water to test."));
-      Serial.println(F("       TIP: If probe is in water but reads 0V, ensure VCC is on VIN (5V)!"));
-    } else {
-      Serial.printf("[INFO] Sensor reading active! TDS: %.1f ppm\n", tdsVal);
-    }
-
-    // Stream telemetry to Render FastAPI backend
-    sendTelemetry(tdsVal, turbVal, tempC, phVal);
+    // 4. Stream Telemetry to DROPLET Cloud Backend
+    sendTelemetry(tdsValue, turbidityValue, DEFAULT_TEMPERATURE, DEFAULT_PH);
   }
 
-  yield(); // Keep WiFi background stack active
+  yield(); // Keep WiFi background tasks active
 }
