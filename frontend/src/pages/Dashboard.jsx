@@ -51,7 +51,7 @@ export default function Dashboard({
     sensorStatus === 'ok'
       ? 'OK (Active)'
       : sensorStatus === 'ads1115_not_found'
-      ? 'ADC Not Found'
+      ? 'ADC Offline'
       : sensorStatus === 'read_error'
       ? 'Read Error'
       : sensorStatus === 'serial_fault'
@@ -60,11 +60,12 @@ export default function Dashboard({
 
   const sensorStatusClass = sensorStatus === 'ok' ? 'text-ok' : 'text-bad'
 
-  // WiFi Signal strength
+  // Hardware Connection / Serial Interface
+  const isUno = latest?.source === 'ARDUINO_UNO' || latest?.source == null
   const wifiRssi = latest?.wifi_rssi
   const wifiStrengthLabel =
     wifiRssi == null
-      ? 'N/A'
+      ? 'USB Serial @ 9600'
       : wifiRssi >= -65
       ? `${wifiRssi} dBm (Strong)`
       : wifiRssi >= -75
@@ -99,18 +100,18 @@ export default function Dashboard({
         )}
       </div>
 
-      {/* Sensor fault banner — hardware-agnostic */}
+      {/* Sensor fault banner — Arduino Uno focused */}
       {sensorStatus !== 'ok' && (
         <div className="fault-banner">
           <div className="fault-banner__icon">⚠️</div>
           <div className="fault-banner__body">
             <strong>Device online, but sensor data is unavailable.</strong>
             <p>
-              {sensorStatus === 'ads1115_not_found'
-                ? 'ADS1115 ADC did not respond on I2C. Verify SDA/SCL wiring and ADDR pin.'
-                : sensorStatus === 'serial_fault'
-                ? 'Arduino Uno serial stream timeout. Verify USB cable, COM port, and that the sketch is running at 9600 baud.'
-                : 'Sensor read error. Check wiring and sensor power supply.'}
+              {sensorStatus === 'serial_fault'
+                ? 'Arduino Uno serial stream timeout. Verify USB cable, COM port, and that the gateway script is running.'
+                : sensorStatus === 'ads1115_not_found'
+                ? 'Analog sensor input not detected on A0/A1. Check sensor wiring and 5V power rail.'
+                : 'Sensor read error. Check wiring on A0/A1 and sensor 5V power supply.'}
             </p>
           </div>
         </div>
@@ -128,7 +129,7 @@ export default function Dashboard({
             <div className="dashboard-top__meta">
               <h2>Latest Reading</h2>
               <p className="muted">
-                {latest.device_id} · <span className={`source-tag source-tag--${latest.source?.toLowerCase()}`}>{latest.source}</span>{' '}
+                {latest.device_id} · <span className={`source-tag source-tag--${latest.source?.toLowerCase()}`}>{latest.source === 'ARDUINO_UNO' ? 'ARDUINO UNO' : latest.source}</span>{' '}
                 · {formatTimestamp(latest.timestamp)} ({timeAgo(latest.timestamp)})
               </p>
             </div>
@@ -151,25 +152,33 @@ export default function Dashboard({
                 {sensorStatusLabel}
               </strong>
               <span className="muted">
-                {latest?.source === 'ARDUINO_UNO'
-                  ? 'Arduino Uno 10-bit ADC'
-                  : latest?.source === 'ESP8266'
-                  ? 'ESP8266 + ADS1115 16-bit I2C ADC'
-                  : 'Sensor subsystem'}
+                {latest?.source === 'ARDUINO_UNO' || !latest?.source
+                  ? 'Arduino Uno 10-bit ADC (A0/A1)'
+                  : `${latest.source} ADC Module`}
               </span>
             </div>
 
             <div className="info-panel dashboard-status-card">
-              <span className="muted">Wi-Fi signal</span>
-              <strong>{wifiStrengthLabel}</strong>
               <span className="muted">
-                {latest.uptime != null ? `${latest.uptime}s uptime` : 'Wi-Fi Telemetry'}
+                {isUno && wifiRssi == null ? 'Data interface' : 'Wi-Fi signal'}
+              </span>
+              <strong>
+                {isUno && wifiRssi == null ? 'USB Serial @ 9600' : wifiStrengthLabel}
+              </strong>
+              <span className="muted">
+                {isUno && wifiRssi == null
+                  ? 'Arduino Uno USB Gateway'
+                  : latest.uptime != null
+                  ? `${latest.uptime}s uptime`
+                  : 'Serial / Cloud Gateway'}
               </span>
             </div>
 
             <div className="info-panel dashboard-status-card">
               <span className="muted">Screening status</span>
-              <strong>{latest.screening_status || 'UNAVAILABLE'}</strong>
+              <strong className={latest.screening_status === 'GOOD' ? 'text-ok' : latest.screening_status ? 'text-warn' : ''}>
+                {latest.screening_status || 'UNAVAILABLE'}
+              </strong>
               <span className="muted">TDS + turbidity preliminary screening</span>
             </div>
 
@@ -178,9 +187,7 @@ export default function Dashboard({
                 <span className="muted">Unmeasured sensors</span>
                 <strong>pH / temperature</strong>
                 <span className="muted">
-                  {latest?.source === 'ARDUINO_UNO'
-                    ? 'Not measured — Arduino Uno two-sensor setup'
-                    : 'Not measured in two-sensor mode'}
+                  Not measured — Arduino Uno two-sensor setup
                 </span>
               </div>
             )}

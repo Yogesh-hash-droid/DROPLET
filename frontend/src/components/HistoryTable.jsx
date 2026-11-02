@@ -4,7 +4,7 @@ import { formatValue, formatTimestamp } from '../utils/format.js'
 import SafetyBadge from './SafetyBadge.jsx'
 
 const STATUSES = ['ALL', 'SAFE', 'WARNING', 'UNSAFE']
-const SOURCES = ['ALL', 'SIMULATION', 'ESP32', 'ESP8266']
+const SOURCES = ['ALL', 'ARDUINO_UNO', 'SIMULATION', 'ESP32', 'ESP8266']
 
 export default function HistoryTable({ readings = [] }) {
   const [statusFilter, setStatusFilter] = useState('ALL')

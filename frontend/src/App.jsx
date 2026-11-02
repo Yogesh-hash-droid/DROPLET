@@ -78,7 +78,9 @@ export default function App() {
           Educational prototype — not a substitute for certified laboratory water testing.
         </span>
         <span className="app-footer__mode">
-          {latest?.source === 'ESP32' || latest?.source === 'ESP8266'
+          {latest?.source === 'ARDUINO_UNO'
+            ? 'Data source: physical Arduino Uno hardware (USB Serial Gateway)'
+            : latest?.source === 'ESP32' || latest?.source === 'ESP8266'
             ? `Data source: physical ${latest.source} hardware`
             : 'Data source: SIMULATION (software-generated, not real hardware)'}
           {' · '}

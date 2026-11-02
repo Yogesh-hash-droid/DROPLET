@@ -8,7 +8,7 @@ const TABS = [
 
 export default function Header({ mode, health, lastSeen, activeTab, onTabChange }) {
   const healthy = health?.status === 'healthy'
-  const modeIsHardware = mode === 'ESP32' || mode === 'ESP8266'
+  const modeIsHardware = mode === 'ARDUINO_UNO' || mode === 'ESP32' || mode === 'ESP8266'
 
   return (
     <header className="app-header">
@@ -27,12 +27,12 @@ export default function Header({ mode, health, lastSeen, activeTab, onTabChange 
           className={`mode-badge ${modeIsHardware ? 'mode-badge--hardware' : 'mode-badge--simulation'}`}
           title={
             modeIsHardware
-              ? `Data from the physical ${mode} sensor node`
+              ? `Data from the physical ${mode === 'ARDUINO_UNO' ? 'Arduino Uno' : mode} sensor node`
               : 'SIMULATION = software-generated data from simulator/, not real hardware'
           }
         >
           {modeIsHardware ? <Microchip size={15} /> : <MonitorSmartphone size={15} />}
-          {modeIsHardware ? 'REAL HARDWARE' : 'SIMULATION'}
+          {modeIsHardware ? (mode === 'ARDUINO_UNO' ? 'ARDUINO UNO' : 'REAL HARDWARE') : 'SIMULATION'}
         </span>
 
         <span className={`health-badge ${healthy ? 'health-badge--ok' : 'health-badge--down'}`}>

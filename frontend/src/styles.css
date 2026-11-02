@@ -251,10 +251,10 @@ p { margin: 0; }
 }
 .history-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .history-table tbody tr:hover { background: rgba(56, 189, 248, 0.05); }
-.cell-time { color: var(--muted); }
 .source-tag { font-size: 0.7rem; font-weight: 750; letter-spacing: 0.6px; border-radius: 6px; padding: 2px 7px; }
+.source-tag--arduino_uno { background: rgba(6, 182, 212, 0.18); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.45); }
 .source-tag--simulation { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
-.source-tag--esp32 { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4); }
+.source-tag--esp32, .source-tag--esp8266 { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4); }
 .ml-tag { font-size: 0.74rem; font-weight: 700; border-radius: 6px; padding: 2px 8px; }
 .ml-tag--potable { background: rgba(34, 197, 94, 0.13); color: #86efac; border: 1px solid rgba(34, 197, 94, 0.35); }
 .ml-tag--not { background: rgba(239, 68, 68, 0.13); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.35); }

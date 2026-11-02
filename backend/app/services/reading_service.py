@@ -96,9 +96,9 @@ def create_reading_with_assessment(
         # Fault state: Do NOT calculate rule checks or screening scores or run ML.
         from app.models.prediction import SafetyStatus as PredictionSafetyStatus
         _SENSOR_FAULT_MESSAGES = {
-            "ads1115_not_found": "ADS1115 ADC not found on I2C bus — verify SDA/SCL wiring and ADDR pin",
-            "read_error": "Sensor read error during ADC conversion — check wiring stability",
-            "serial_fault": "Serial sensor data unavailable — Arduino Uno may not be transmitting",
+            "ads1115_not_found": "Analog sensor input offline — check A0/A1 wiring and 5V power",
+            "read_error": "Sensor read error during conversion — check wiring stability",
+            "serial_fault": "Arduino Uno serial data unavailable — verify USB connection and gateway",
         }
         fault_warning = _SENSOR_FAULT_MESSAGES.get(
             reading_in.sensor_status,
