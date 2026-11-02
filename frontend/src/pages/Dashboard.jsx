@@ -46,14 +46,16 @@ export default function Dashboard({
   const isStale = latestAgeMs > 10000 && latest !== null
 
   // Sensor hardware subsystem status
-  const sensorStatus = latest?.sensor_status || (latest?.tds != null && latest?.turbidity != null ? 'ok' : 'ads1115_not_found')
+  const sensorStatus = latest?.sensor_status || (latest?.tds != null && latest?.turbidity != null ? 'ok' : 'sensor_fault')
   const sensorStatusLabel =
     sensorStatus === 'ok'
       ? 'OK (Active)'
       : sensorStatus === 'ads1115_not_found'
-      ? 'ADS1115 Not Found'
+      ? 'ADC Not Found'
       : sensorStatus === 'read_error'
-      ? 'I2C Read Error'
+      ? 'Read Error'
+      : sensorStatus === 'serial_fault'
+      ? 'Serial Timeout'
       : sensorStatus
 
   const sensorStatusClass = sensorStatus === 'ok' ? 'text-ok' : 'text-bad'
@@ -97,16 +99,18 @@ export default function Dashboard({
         )}
       </div>
 
-      {/* Sensor fault banner when device is communicating but ADS1115 is faulty */}
+      {/* Sensor fault banner — hardware-agnostic */}
       {sensorStatus !== 'ok' && (
         <div className="fault-banner">
           <div className="fault-banner__icon">⚠️</div>
           <div className="fault-banner__body">
-            <strong>Device online, but sensor module not responding. Check ADS1115 wiring.</strong>
+            <strong>Device online, but sensor data is unavailable.</strong>
             <p>
               {sensorStatus === 'ads1115_not_found'
-                ? 'The ADS1115 ADC did not ACK on I2C address 0x48–0x4B. Verify 3V3 measured at VDD, GND and ADDR to GND, SDA=D2 (GPIO4), SCL=D1 (GPIO5).'
-                : 'I2C read error occurred during conversion. Checking bus recovery and wiring stability.'}
+                ? 'ADS1115 ADC did not respond on I2C. Verify SDA/SCL wiring and ADDR pin.'
+                : sensorStatus === 'serial_fault'
+                ? 'Arduino Uno serial stream timeout. Verify USB cable, COM port, and that the sketch is running at 9600 baud.'
+                : 'Sensor read error. Check wiring and sensor power supply.'}
             </p>
           </div>
         </div>
@@ -146,7 +150,13 @@ export default function Dashboard({
               <strong className={sensorStatusClass}>
                 {sensorStatusLabel}
               </strong>
-              <span className="muted">ADS1115 16-bit I2C ADC</span>
+              <span className="muted">
+                {latest?.source === 'ARDUINO_UNO'
+                  ? 'Arduino Uno 10-bit ADC'
+                  : latest?.source === 'ESP8266'
+                  ? 'ESP8266 + ADS1115 16-bit I2C ADC'
+                  : 'Sensor subsystem'}
+              </span>
             </div>
 
             <div className="info-panel dashboard-status-card">
@@ -167,7 +177,11 @@ export default function Dashboard({
               <div className="info-panel dashboard-status-card">
                 <span className="muted">Unmeasured sensors</span>
                 <strong>pH / temperature</strong>
-                <span className="muted">Not measured in ESP8266 two-sensor mode</span>
+                <span className="muted">
+                  {latest?.source === 'ARDUINO_UNO'
+                    ? 'Not measured — Arduino Uno two-sensor setup'
+                    : 'Not measured in two-sensor mode'}
+                </span>
               </div>
             )}
           </section>

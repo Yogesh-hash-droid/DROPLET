@@ -95,10 +95,14 @@ def create_reading_with_assessment(
     if reading_in.sensor_status != "ok" or db_reading.tds is None or db_reading.turbidity is None:
         # Fault state: Do NOT calculate rule checks or screening scores or run ML.
         from app.models.prediction import SafetyStatus as PredictionSafetyStatus
-        fault_warning = (
-            "Sensor module offline: ADS1115 not found at configured I2C address"
-            if reading_in.sensor_status == "ads1115_not_found"
-            else f"Sensor read error ({reading_in.sensor_status})"
+        _SENSOR_FAULT_MESSAGES = {
+            "ads1115_not_found": "ADS1115 ADC not found on I2C bus — verify SDA/SCL wiring and ADDR pin",
+            "read_error": "Sensor read error during ADC conversion — check wiring stability",
+            "serial_fault": "Serial sensor data unavailable — Arduino Uno may not be transmitting",
+        }
+        fault_warning = _SENSOR_FAULT_MESSAGES.get(
+            reading_in.sensor_status,
+            f"Sensor subsystem offline ({reading_in.sensor_status})"
         )
         db_prediction = Prediction(
             reading_id=db_reading.id,

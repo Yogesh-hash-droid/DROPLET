@@ -26,6 +26,14 @@ def _run_migrations(db_engine):
             "ALTER TABLE devices ADD COLUMN wifi_rssi INT NULL",
             "ALTER TABLE devices ADD COLUMN firmware_version VARCHAR(32) NULL",
             "ALTER TABLE predictions MODIFY COLUMN quality_score FLOAT NULL",
+            # Arduino Uno support: add ARDUINO_UNO to source ENUM columns
+            "ALTER TABLE devices MODIFY COLUMN source ENUM('SIMULATION','ESP32','ESP8266','ARDUINO_UNO') NOT NULL DEFAULT 'SIMULATION'",
+            "ALTER TABLE water_readings MODIFY COLUMN source ENUM('SIMULATION','ESP32','ESP8266','ARDUINO_UNO') NOT NULL DEFAULT 'SIMULATION'",
+            # Make ph/tds/turbidity/temperature nullable (Arduino Uno has no pH/temp)
+            "ALTER TABLE water_readings MODIFY COLUMN ph FLOAT NULL",
+            "ALTER TABLE water_readings MODIFY COLUMN tds FLOAT NULL",
+            "ALTER TABLE water_readings MODIFY COLUMN turbidity FLOAT NULL",
+            "ALTER TABLE water_readings MODIFY COLUMN temperature FLOAT NULL",
         ]
         for stmt in statements:
             try:

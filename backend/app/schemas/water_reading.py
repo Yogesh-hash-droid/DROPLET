@@ -13,8 +13,8 @@ class WaterReadingBase(BaseModel):
     tds: Optional[float] = Field(None, ge=0.0, allow_inf_nan=False, description="Total Dissolved Solids in ppm (>= 0); null when sensor faulty")
     turbidity: Optional[float] = Field(None, ge=0.0, allow_inf_nan=False, description="Turbidity in NTU (>= 0); null when sensor faulty")
     temperature: Optional[float] = Field(None, ge=-10.0, le=100.0, allow_inf_nan=False, description="Water temperature in °C (-10 to 100); optional - null = not measured")
-    source: Literal["SIMULATION", "ESP32", "ESP8266"] = Field(..., description="Telemetry source identifier")
-    sensor_status: Literal["ok", "ads1115_not_found", "read_error"] = Field("ok", description="Operational status of the sensor subsystem")
+    source: Literal["SIMULATION", "ESP32", "ESP8266", "ARDUINO_UNO"] = Field(..., description="Telemetry source identifier")
+    sensor_status: Literal["ok", "ads1115_not_found", "read_error", "serial_fault"] = Field("ok", description="Operational status of the sensor subsystem")
     wifi_rssi: Optional[int] = Field(None, description="Wi-Fi signal strength in dBm")
     uptime: Optional[int] = Field(None, description="Device uptime in seconds")
     firmware_version: Optional[str] = Field(None, max_length=32, description="Firmware version string")
@@ -73,7 +73,7 @@ class ReadingIngestionResponse(BaseModel):
     tds: Optional[float] = None
     turbidity: Optional[float] = None
     temperature: Optional[float] = None
-    source: Literal["SIMULATION", "ESP32", "ESP8266"]
+    source: Literal["SIMULATION", "ESP32", "ESP8266", "ARDUINO_UNO"]
     timestamp: datetime
 
     quality_score: Optional[float] = None

@@ -10,6 +10,7 @@ class DeviceSource(str, enum.Enum):
     SIMULATION = "SIMULATION"
     ESP32 = "ESP32"
     ESP8266 = "ESP8266"
+    ARDUINO_UNO = "ARDUINO_UNO"
 
 
 class DeviceStatus(str, enum.Enum):
