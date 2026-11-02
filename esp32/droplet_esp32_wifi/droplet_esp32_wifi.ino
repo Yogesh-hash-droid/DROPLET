@@ -1,597 +1,427 @@
 /*
- * DROPLET - Smart Water Quality Monitoring System
- * Fault-Tolerant Telemetry Firmware for NodeMCU ESP8266 + ADS1115
- *
- * Firmware Version: 4.3.0-smart-autodetect
- *
- * KEY CAPABILITIES:
- * 1. Smart I2C Auto-Detection:
- *    - Automatically scans both standard (D2=SDA, D1=SCL) AND reversed (D1=SDA, D2=SCL) pins!
- *    - Scans all 4 valid ADS1115 I2C addresses (0x48, 0x49, 0x4A, 0x4B).
- *    - 50 kHz I2C clock speed for rock-solid reliability over breadboard jumper wires.
- * 2. Non-Destructive, Resilient Wi-Fi:
- *    - Eliminates aggressive disconnect loops; allows DHCP handshakes to complete.
- *    - Full status diagnostics with human-readable error messages (2.4 GHz check, password check).
- * 3. Continuous Cloud Telemetry to Render & Vercel:
- *    - Sends telemetry every 1000 ms:
- *      * With sensors: Real-time TDS, Turbidity, Temp with sensor_status="ok".
- *      * Fault state: Real-time nulls with sensor_status="ads1115_not_found" (Device stays ONLINE!).
- *    - Uses TLS keep-alive with optimized 1024/512 byte buffers for ESP8266 heap stability.
- *
  * ============================================================================
- * AUTHORITATIVE HARDWARE WIRING (NodeMCU ESP8266 to ADS1115):
+ * DROPLET — Smart Water Quality Monitoring System
+ * Wi-Fi Cloud Telemetry Firmware (ESP32 / ESP8266)
  * ============================================================================
- * 1. ADS1115 Module:
- *    - ADS VDD  -> ESP 3V / 3V3 (3.3V Power - Do NOT use 5V/VIN!)
- *    - ADS GND  -> ESP G / GND
- *    - ADS ADDR -> ESP G / GND (Sets I2C address 0x48)
- *    - ADS SCL  -> ESP D1 (GPIO 5)
- *    - ADS SDA  -> ESP D2 (GPIO 4)
- *    * NOTE: If D1 & D2 are swapped, the firmware auto-detects and auto-swaps them!
- *    * NOTE: Header pins MUST be soldered to ADS1115 PCB! Friction fit will fail I2C.
+ * Based on the authoritative sensor and calibration logic from:
+ *   water_quality_uno_final.ino
  *
- * 2. TDS Meter (Gravity Analog):
- *    - TDS VCC (+)    -> ESP 3V (Red wire)
- *    - TDS GND (-)    -> ESP G (Black wire)
- *    - TDS Signal (A) -> ADS A0 (Yellow wire)
+ * ⚠️ Educational Prototype Disclaimer:
+ * This system is for learning and demonstration purposes only.
+ * TDS readings are NOT temperature-compensated.
+ * Does NOT certify water potability or safety.
  *
- * 3. Turbidity Sensor:
- *    - Turbidity VCC (+)    -> ESP 3V (Red wire)
- *    - Turbidity GND (-)    -> ESP G (Black wire)
- *    - Turbidity Signal (A) -> ADS A1 (Purple wire)
- *    * IMPORTANT: Set the slide switch on the blue adapter board to 'A' (Analog)!
+ * SENSORS:
+ *   1. Analog TDS Module (Gravity / Keyestudio)
+ *   2. Analog Turbidity Sensor Module (Gravity / TSW-20M / SEN0189)
+ *   * No pH sensor, no temperature sensor in this setup.
+ *
+ * HARDWARE WIRING (ESP32):
+ *   --------------------------------------------------------------------------
+ *   Sensor Wire         ESP32 Pin          Notes
+ *   --------------------------------------------------------------------------
+ *   TDS red (+)         GPIO 23            Powered ONLY while reading (prevents
+ *                                          interference and probe degradation)
+ *   TDS black (-)       GND                Common Ground
+ *   TDS yellow (Signal) GPIO 34 (ADC1_CH6) Analog input (safe with Wi-Fi)
+ *   Turbidity VCC       5V (or 3.3V)       Continuous power
+ *   Turbidity GND       GND                Common Ground
+ *   Turbidity Signal    GPIO 35 (ADC1_CH7) Analog input (safe with Wi-Fi)
+ *                       * Adapter switch set to 'A' (Analog)!
+ *   --------------------------------------------------------------------------
+ *
+ * SERIAL MONITOR CALIBRATION COMMANDS (115200 baud, line ending: Newline):
+ *   tds <ppm>   -> Place probe in standard solution (e.g. `tds 500`) -> saves TDS factor
+ *   clear       -> Place turbidity probe in clean water -> saves 0 NTU clear-point
+ *   turb <ntu>  -> Place turbidity probe in known NTU solution (e.g. `turb 100`) -> saves span
+ *   show        -> Display current calibration stored in EEPROM/Flash
+ *   reset       -> Erase saved calibration back to factory defaults
  * ============================================================================
  */
 
-#include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiClientSecure.h>
+#if defined(ESP32)
+  #include <WiFi.h>
+  #include <HTTPClient.h>
+  #include <WiFiClientSecure.h>
+  #define BOARD_NAME "ESP32"
+  #define DEFAULT_DEVICE_ID "ESP32-WATER-001"
+  #define DEFAULT_SOURCE "ESP32"
+  const uint8_t PIN_TDS_PWR  = 23;   // Digital pin: powers TDS module only during read
+  const uint8_t PIN_TDS_ADC  = 34;   // ADC1_CH6 (input only, unaffected by Wi-Fi)
+  const uint8_t PIN_TURB_ADC = 35;   // ADC1_CH7 (input only, unaffected by Wi-Fi)
+  const float   ADC_VREF     = 3.3f; // ESP32 operating voltage
+  const float   ADC_MAX      = 4095.0f; // 12-bit ADC
+#elif defined(ESP8266)
+  #include <ESP8266WiFi.h>
+  #include <ESP8266HTTPClient.h>
+  #include <WiFiClientSecure.h>
+  #define BOARD_NAME "ESP8266"
+  #define DEFAULT_DEVICE_ID "ESP8266-WATER-001"
+  #define DEFAULT_SOURCE "ESP8266"
+  const uint8_t PIN_TDS_PWR  = 14;   // D5 / GPIO 14
+  const uint8_t PIN_TDS_ADC  = A0;   // ESP8266 single analog pin
+  const uint8_t PIN_TURB_ADC = A0;
+  const float   ADC_VREF     = 3.3f;
+  const float   ADC_MAX      = 1023.0f; // 10-bit ADC
+#else
+  #error "This firmware is designed for ESP32 or ESP8266."
+#endif
+
 #include <Wire.h>
+#include <EEPROM.h>
 #include <ArduinoJson.h>
 
 // ============================================================================
-// CONFIG SECTION 1: HARDWARE DEFINITIONS & TUNING
+// CONFIGURATION: WI-FI & CLOUD BACKEND
 // ============================================================================
-#define FIRMWARE_VERSION        "4.3.0-smart-autodetect"
+// Wi-Fi Credentials (supports 2.4 GHz Mobile Hotspots and Home Routers)
+const char* WIFI_SSID       = "Vgp";
+const char* WIFI_PASSWORD   = "p";
 
-// Default Pin Configuration for NodeMCU ESP8266
-// D2 = GPIO 4 (Default SDA)
-// D1 = GPIO 5 (Default SCL)
-uint8_t pinSDA = 4;
-uint8_t pinSCL = 5;
+// DROPLET Cloud API Endpoint
+const char* BACKEND_URL     = "https://droplet-api-byl8.onrender.com/api/readings";
+const char* DEVICE_ID       = DEFAULT_DEVICE_ID;
+const char* SOURCE_TAG      = DEFAULT_SOURCE;
+const char* FIRMWARE_VER    = "5.0.0-dual-sensor";
 
-#define I2C_CLOCK_SPEED         50000   // 50 kHz: highly immune to breadboard wire capacitance
-#define I2C_STRETCH_LIMIT_US    1500    // 1500 us clock stretch limit
-
-// ADS1115 Programmable Gain: GAIN_ONE (+/-4.096V Full Scale, 0.125 mV/count)
-#define ADS_PGA_CONFIG          0x0200  // PGA = 001 (+/-4.096V)
-#define ADS_VOLTS_PER_COUNT     0.000125f // 4.096V / 32768 counts
-
-// Sensor Channel Mappings
-#define CHANNEL_TDS             0       // A0 = TDS Sensor
-#define CHANNEL_TURBIDITY       1       // A1 = Turbidity Sensor
-#define CHANNEL_PH_AUX          2       // A2 = Reserved
-#define CHANNEL_TEMP_AUX        3       // A3 = Reserved
-
-const float DEFAULT_TEMPERATURE_C = 25.0f;
+// Sampling & Telemetry Intervals
+const int           SAMPLES             = 30;     // Noise reduction sample count
+const unsigned long INTERVAL_MS         = 2000;   // Ingestion rate: every 2 seconds
+const unsigned long WIFI_CHECK_INTERVAL = 10000;  // Non-blocking Wi-Fi monitor (10s)
 
 // ============================================================================
-// CONFIG SECTION 2: WI-FI & BACKEND CONFIGURATION
+// CALIBRATION DATA STRUCTURE (Saved in EEPROM / Flash)
 // ============================================================================
-// Wi-Fi Credentials (MUST be 2.4 GHz Band on Hotspot/Router!)
-const char* WIFI_SSID           = "SAMSUNG A14";
-const char* WIFI_PASSWORD       = "pallavi123";
+struct CalData {
+  uint16_t magic;
+  float    tdsK;
+  float    vClear;
+  float    vKnown;
+  float    ntuKnown;
+  bool     turbOk;
+};
 
-// Backend API URL (Render Cloud)
-const char* BACKEND_URL         = "https://droplet-api-byl8.onrender.com/api/readings";
-const char* DEVICE_ID           = "ESP8266-WATER-001";
-const char* SOURCE_TAG          = "ESP8266";
+CalData cal;
+const uint16_t CAL_MAGIC = 0xA55A;
 
-// Telemetry & Retry Timings
-const unsigned long SEND_INTERVAL_MS       = 1000;   // Send reading every 1000 ms
-const unsigned long I2C_RETRY_INTERVAL_MS  = 4000;   // Probe for missing ADS1115 every 4s
-const unsigned long WIFI_RECONNECT_CADENCE = 12000;  // Non-destructive Wi-Fi check cadence (12s)
-const unsigned long HTTP_COLD_START_MS     = 10000;  // 10s for initial TLS negotiation
-const unsigned long HTTP_STANDARD_TIMEOUT  = 5000;   // 5s standard HTTP timeout
+float lastTdsRaw = 0.0f;  // Raw ppm before calibration factor
+float lastVTurb  = 0.0f;  // Last measured turbidity voltage
+String sensorStatus = "ok";
 
-// ============================================================================
-// GLOBAL STATE VARIABLES
-// ============================================================================
-unsigned long lastSendTime       = 0;
-unsigned long lastI2cRetryTime   = 0;
-unsigned long lastWifiRetryTime  = 0;
-bool          firstRequest       = true;
-bool          isHttpConnected    = false;
-
-// I2C Sensor Hardware State
-bool          adsFound           = false;
-uint8_t       adsAddress         = 0x48;
-String        sensorStatus       = "ads1115_not_found"; // "ok" | "ads1115_not_found" | "read_error"
-int           consecutiveErrors  = 0;
-
-WiFiClientSecure secureClient;
-HTTPClient       httpClient;
-
-// ============================================================================
-// 1. SENSOR CONVERSION FORMULAS
-// ============================================================================
-
-float calculateTDS(float voltage, float tempC) {
-  if (voltage < 0.015f) {
-    return 0.0f; // Dry probe
+void loadCalibration() {
+  EEPROM.begin(sizeof(CalData) + 16);
+  EEPROM.get(0, cal);
+  if (cal.magic != CAL_MAGIC) {
+    Serial.println(F("[EEPROM] No saved calibration found. Initializing factory defaults."));
+    cal.magic    = CAL_MAGIC;
+    cal.tdsK     = 1.0f;
+    cal.vClear   = 2.5f;     // Default nominal clean water voltage (~2.5V - 3.0V)
+    cal.vKnown   = 1.0f;
+    cal.ntuKnown = 500.0f;
+    cal.turbOk   = false;
+  } else {
+    Serial.println(F("[EEPROM] Calibration loaded successfully from Flash."));
   }
-  float compensationCoefficient = 1.0f + 0.02f * (tempC - 25.0f);
-  float compensationVoltage     = voltage / compensationCoefficient;
-
-  float tds = (133.42f * powf(compensationVoltage, 3)
-             - 255.86f * powf(compensationVoltage, 2)
-             + 857.39f * compensationVoltage) * 0.5f;
-
-  if (tds < 0.0f) tds = 0.0f;
-  return tds;
 }
 
-float calculateTurbidity(float voltage) {
-  float ntu = 0.0f;
-  if (voltage >= 2.50f) {
-    ntu = (3.3f - voltage) * 10.0f;
-    if (ntu < 0.50f) ntu = 0.50f;
-  } else if (voltage < 0.05f) {
-    ntu = 0.0f;
-  } else {
-    ntu = -1120.4f * powf(voltage, 2) + 5742.3f * voltage - 4352.9f;
-    if (ntu < 0.0f) ntu = 0.50f;
-    if (ntu > 3000.0f) ntu = 3000.0f;
+void saveCalibration() {
+  EEPROM.put(0, cal);
+  EEPROM.commit();
+}
+
+// ============================================================================
+// SENSOR READING & PHYSICAL CONVERSION (Authoritative Logic)
+// ============================================================================
+// Median-style sorted sample filter to eliminate ADC electrical ripple
+float readFilteredVolts(uint8_t pin) {
+  analogRead(pin); // Discard initial read after pin mux switch
+  delay(5);
+
+  int s[SAMPLES];
+  for (int i = 0; i < SAMPLES; i++) {
+    s[i] = analogRead(pin);
+    delay(4);
   }
+
+  // Insertion sort
+  for (int i = 1; i < SAMPLES; i++) {
+    int key = s[i];
+    int j = i - 1;
+    while (j >= 0 && s[j] > key) {
+      s[j + 1] = s[j];
+      j--;
+    }
+    s[j + 1] = key;
+  }
+
+  // Average the middle 50% of readings (interquartile mean)
+  long sum = 0;
+  int from = SAMPLES / 4;
+  int to   = SAMPLES - SAMPLES / 4;
+  for (int i = from; i < to; i++) {
+    sum += s[i];
+  }
+
+  float avgAdc = (float)sum / (to - from);
+  float volts = (avgAdc / ADC_MAX) * ADC_VREF;
+  return volts;
+}
+
+// Gravity Analog TDS standard equation (uncalibrated ppm at ~25 C)
+float tdsRawPpm(float v) {
+  float ppm = (133.42f * v * v * v - 255.86f * v * v + 857.39f * v) * 0.5f;
+  return ppm < 0.0f ? 0.0f : ppm;
+}
+
+// Turbidity conversion: Uses 2-point calibration if available, or nominal curve
+float turbidityNtu(float v) {
+  if (cal.turbOk) {
+    float span = cal.vClear - cal.vKnown;
+    if (fabs(span) > 0.05f) {
+      float ntu = (cal.vClear - v) * (cal.ntuKnown / span);
+      return ntu < 0.0f ? 0.0f : ntu;
+    }
+  }
+  // Standard Gravity turbidity response curve fallback (uncalibrated)
+  // Clean water ~ 2.5V-3.0V -> 0 NTU; High turbidity ~ 0.5V -> 3000 NTU
+  if (v >= 2.5f) return 0.0f;
+  if (v <= 0.5f) return 3000.0f;
+  float ntu = -1120.4f * v * v + 5742.3f * v - 4352.9f;
+  if (ntu < 0.0f) ntu = 0.0f;
+  if (ntu > 3000.0f) ntu = 3000.0f;
   return ntu;
 }
 
 // ============================================================================
-// 2. I2C BUS RECOVERY & SMART MULTI-PIN SCANNER
+// SERIAL MONITOR CALIBRATION COMMANDS
 // ============================================================================
-
-void recoverI2CBus(uint8_t sda, uint8_t scl) {
-  pinMode(sda, INPUT_PULLUP);
-  pinMode(scl, OUTPUT);
-  for (int i = 0; i < 9; i++) {
-    digitalWrite(scl, LOW);
-    delayMicroseconds(10);
-    digitalWrite(scl, HIGH);
-    delayMicroseconds(10);
-  }
-  pinMode(sda, OUTPUT);
-  digitalWrite(sda, LOW);
-  delayMicroseconds(10);
-  digitalWrite(scl, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(sda, HIGH);
-  delayMicroseconds(10);
-  pinMode(sda, INPUT_PULLUP);
-  pinMode(scl, INPUT_PULLUP);
-
-  Wire.begin(sda, scl);
-  Wire.setClock(I2C_CLOCK_SPEED);
-  Wire.setClockStretchLimit(I2C_STRETCH_LIMIT_US);
+void showCalibration() {
+  Serial.println(F("\n--- CURRENT CALIBRATION ---"));
+  Serial.print(F("TDS Factor K     : ")); Serial.println(cal.tdsK, 4);
+  Serial.print(F("Clear-water V    : ")); Serial.print(cal.vClear, 3); Serial.println(F(" V"));
+  Serial.print(F("Known-point V    : ")); Serial.print(cal.vKnown, 3); Serial.println(F(" V"));
+  Serial.print(F("Known Point NTU  : ")); Serial.print(cal.ntuKnown, 1); Serial.println(F(" NTU"));
+  Serial.print(F("Turbidity Ready  : ")); Serial.println(cal.turbOk ? F("YES (2-Point Active)") : F("NO (Using Standard Curve)"));
+  Serial.println(F("---------------------------\n"));
 }
 
-/**
- * Probes a specific I2C configuration for ADS1115 (0x48..0x4B).
- * Returns detected address, or 0 if none.
- */
-uint8_t scanForADS(uint8_t sda, uint8_t scl) {
-  recoverI2CBus(sda, scl);
-  const uint8_t addrs[] = {0x48, 0x49, 0x4A, 0x4B};
-  for (int i = 0; i < 4; i++) {
-    Wire.beginTransmission(addrs[i]);
-    if (Wire.endTransmission() == 0) {
-      return addrs[i];
+void handleSerialCommand(String cmd) {
+  cmd.trim();
+  cmd.toLowerCase();
+  if (cmd.length() == 0) return;
+
+  if (cmd.startsWith("tds ")) {
+    float ref = cmd.substring(4).toFloat();
+    if (ref > 0.0f && lastTdsRaw > 1.0f) {
+      cal.tdsK = ref / lastTdsRaw;
+      saveCalibration();
+      Serial.printf("[CAL] Saved TDS factor K = %0.4f (reference: %0.1f ppm)\n", cal.tdsK, ref);
+    } else {
+      Serial.println(F("[CAL ERROR] Submerge TDS probe in solution reading > 1 ppm before calibrating!"));
     }
-  }
-  return 0;
-}
-
-/**
- * Intelligent I2C diagnostic scanner:
- * 1. Checks default pins: D2 (SDA) / D1 (SCL)
- * 2. If not found, checks reversed pins: D1 (SDA) / D2 (SCL)
- * 3. If found on reversed pins, auto-configures them!
- */
-bool runStartupI2CScan() {
-  Serial.println(F("\n========================================================"));
-  Serial.println(F("     DROPLET Hardware Diagnostic: Smart I2C Scanner     "));
-  Serial.println(F("========================================================"));
-
-  // Test 1: Standard NodeMCU Pinout: SDA=D2 (GPIO 4), SCL=D1 (GPIO 5)
-  Serial.printf("[Test 1] Probing Standard Pins: SDA=D2 (GPIO %d), SCL=D1 (GPIO %d) @ 50kHz...\n", 4, 5);
-  uint8_t foundAddr = scanForADS(4, 5);
-
-  if (foundAddr != 0) {
-    pinSDA = 4;
-    pinSCL = 5;
-    adsAddress = foundAddr;
-    adsFound = true;
-    sensorStatus = "ok";
-    consecutiveErrors = 0;
-    Serial.printf("  --> [SUCCESS] ADS1115 detected at 0x%02X on standard pins (D2=SDA, D1=SCL)!\n", adsAddress);
-    return true;
-  }
-
-  // Test 2: Inverted Pinout: SDA=D1 (GPIO 5), SCL=D2 (GPIO 4)
-  Serial.printf("[Test 2] Probing Reversed Pins: SDA=D1 (GPIO %d), SCL=D2 (GPIO %d) @ 50kHz...\n", 5, 4);
-  foundAddr = scanForADS(5, 4);
-
-  if (foundAddr != 0) {
-    pinSDA = 5;
-    pinSCL = 4;
-    adsAddress = foundAddr;
-    adsFound = true;
-    sensorStatus = "ok";
-    consecutiveErrors = 0;
-    Serial.println(F("  -------------------------------------------------------------"));
-    Serial.printf("  --> [AUTO-ADAPT SUCCESS] ADS1115 detected at 0x%02X!\n", adsAddress);
-    Serial.println(F("  --> NOTE: Your SDA and SCL jumper wires are swapped (D1=SDA, D2=SCL)."));
-    Serial.println(F("  --> Firmware has automatically adapted! No hardware changes needed."));
-    Serial.println(F("  -------------------------------------------------------------"));
-    return true;
-  }
-
-  // If neither orientation found ADS1115, do a full 0x01-0x7F scan to see if ANY device responds
-  Serial.println(F("\n[Test 3] ADS1115 not on 0x48-0x4B. Running broad bus scan (0x01 - 0x7F)..."));
-  recoverI2CBus(pinSDA, pinSCL);
-  int anyDeviceCount = 0;
-  for (uint8_t addr = 1; addr < 127; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-      anyDeviceCount++;
-      Serial.printf("  -> Found other I2C device at 0x%02X (%d)\n", addr, addr);
+  } else if (cmd == "clear") {
+    cal.vClear = lastVTurb;
+    cal.turbOk = (cal.vClear - cal.vKnown) > 0.1f && cal.ntuKnown > 0.0f;
+    saveCalibration();
+    Serial.printf("[CAL] Saved clear-water reading: %0.3f V (0 NTU reference point)\n", cal.vClear);
+  } else if (cmd.startsWith("turb ")) {
+    float ntu = cmd.substring(5).toFloat();
+    if (ntu > 0.0f) {
+      cal.vKnown = lastVTurb;
+      cal.ntuKnown = ntu;
+      cal.turbOk = (cal.vClear - cal.vKnown) > 0.1f;
+      saveCalibration();
+      Serial.printf("[CAL] Saved known turbidity point: %0.3f V = %0.1f NTU\n", cal.vKnown, ntu);
+      if (!cal.turbOk) {
+        Serial.println(F("   -> TIP: Calibrate 'clear' in clean water first."));
+      }
+    } else {
+      Serial.println(F("[CAL ERROR] Usage: turb <known_ntu>  (e.g., turb 100)"));
     }
-  }
-
-  adsFound = false;
-  sensorStatus = "ads1115_not_found";
-
-  Serial.println(F("--------------------------------------------------------"));
-  Serial.println(F("[DIAGNOSTIC] ADS1115 NOT DETECTED! Check these 4 essentials:"));
-  Serial.println(F("  1. SOLDER PINS: Header pins MUST be soldered to ADS1115 board."));
-  Serial.println(F("     (Unsoldered friction pins loose in breadboard WILL FAIL I2C)."));
-  Serial.println(F("  2. POWER: Connect ADS VDD -> NodeMCU 3V3 (3.3V) and GND -> GND."));
-  Serial.println(F("  3. ADDR PIN: Connect ADS ADDR -> NodeMCU GND firmly (Sets 0x48)."));
-  Serial.println(F("  4. JUMPER WIRES: Check for defective/loose jumper wires on D1/D2."));
-  Serial.println(F("  --> Non-blocking mode active: Device will continue transmitting"));
-  Serial.println(F("      telemetry to keep Cloud Dashboard ONLINE with error status."));
-  Serial.println(F("========================================================\n"));
-  return false;
-}
-
-/**
- * Fast periodic retry for ADS1115 (checks both pin orientations and all 4 addresses)
- */
-bool probeADS1115Quick() {
-  // 1. Try currently configured pins
-  uint8_t detected = scanForADS(pinSDA, pinSCL);
-  if (detected != 0) {
-    adsAddress = detected;
-    adsFound = true;
-    sensorStatus = "ok";
-    consecutiveErrors = 0;
-    Serial.printf("[ADS1115 Recovery] Locked at 0x%02X on SDA=D%d, SCL=D%d!\n",
-                  adsAddress, (pinSDA == 4 ? 2 : 1), (pinSCL == 5 ? 1 : 2));
-    return true;
-  }
-
-  // 2. Try swapped pins
-  uint8_t altSDA = (pinSDA == 4) ? 5 : 4;
-  uint8_t altSCL = (pinSCL == 5) ? 4 : 5;
-  detected = scanForADS(altSDA, altSCL);
-  if (detected != 0) {
-    pinSDA = altSDA;
-    pinSCL = altSCL;
-    adsAddress = detected;
-    adsFound = true;
-    sensorStatus = "ok";
-    consecutiveErrors = 0;
-    Serial.printf("[ADS1115 Auto-Swap] Locked at 0x%02X! Switched to SDA=D%d, SCL=D%d!\n",
-                  adsAddress, (pinSDA == 4 ? 2 : 1), (pinSCL == 5 ? 1 : 2));
-    return true;
-  }
-
-  return false;
-}
-
-// ============================================================================
-// 3. INDUSTRIAL ADS1115 REGISTER READ DRIVER
-// ============================================================================
-
-bool readADSChannel(uint8_t channel, int16_t &outRaw, float &outVoltage) {
-  if (!adsFound) {
-    outRaw = 0;
-    outVoltage = 0.0f;
-    return false;
-  }
-
-  // Config: OS=1 (start conversion), PGA=+/-4.096V (0x0200), Single-shot (0x0100), 128 SPS (0x0080), Comp off (0x0003)
-  uint16_t config = 0x8000 | ADS_PGA_CONFIG | 0x0100 | 0x0080 | 0x0003;
-  if (channel == 0)      config |= 0x4000; // AIN0 vs GND
-  else if (channel == 1) config |= 0x5000; // AIN1 vs GND
-  else if (channel == 2) config |= 0x6000; // AIN2 vs GND
-  else if (channel == 3) config |= 0x7000; // AIN3 vs GND
-
-  // 1. Write Config Register (Pointer 0x01)
-  Wire.beginTransmission(adsAddress);
-  Wire.write(0x01);
-  Wire.write((uint8_t)(config >> 8));
-  Wire.write((uint8_t)(config & 0xFF));
-  if (Wire.endTransmission() != 0) {
-    return false;
-  }
-
-  // 2. Conversion wait (at 128 SPS, conversion completes in 7.8 ms; wait 12 ms)
-  delay(12);
-
-  // 3. Point to Conversion Register (Pointer 0x00)
-  Wire.beginTransmission(adsAddress);
-  Wire.write(0x00);
-  if (Wire.endTransmission() != 0) {
-    return false;
-  }
-
-  // 4. Read 2-byte 16-bit conversion result
-  if (Wire.requestFrom((uint8_t)adsAddress, (uint8_t)2) != 2) {
-    return false;
-  }
-
-  byte msb = Wire.read();
-  byte lsb = Wire.read();
-  outRaw = (int16_t)((msb << 8) | lsb);
-  if (outRaw < 0) outRaw = 0; // Ground noise clamp
-
-  outVoltage = outRaw * ADS_VOLTS_PER_COUNT;
-  return true;
-}
-
-// ============================================================================
-// 4. WI-FI & TELEMETRY TRANSMISSION (NON-DESTRUCTIVE RECONNECT)
-// ============================================================================
-
-const char* getWiFiStatusName(wl_status_t status) {
-  switch (status) {
-    case WL_IDLE_STATUS:     return "IDLE (Initializing)";
-    case WL_NO_SSID_AVAIL:   return "SSID NOT FOUND (Check 2.4 GHz Band & Hotspot Name)";
-    case WL_SCAN_COMPLETED:  return "SCAN COMPLETED";
-    case WL_CONNECTED:       return "CONNECTED";
-    case WL_CONNECT_FAILED:  return "AUTH FAILED (Incorrect Password)";
-    case WL_CONNECTION_LOST: return "CONNECTION LOST";
-    case WL_DISCONNECTED:    return "DISCONNECTED (Negotiating Handshake / DHCP)";
-    default:                 return "CONNECTING...";
+  } else if (cmd == "show") {
+    showCalibration();
+  } else if (cmd == "reset") {
+    cal.magic = 0;
+    loadCalibration();
+    saveCalibration();
+    Serial.println(F("[CAL] Stored calibration erased. Reset to factory defaults."));
+  } else {
+    Serial.println(F("Commands: tds <ppm> | clear | turb <ntu> | show | reset"));
   }
 }
 
-/**
- * Non-destructive Wi-Fi health check.
- * NEVER calls WiFi.disconnect() inside a loop to prevent interrupting DHCP!
- */
-bool ensureWiFi() {
-  wl_status_t st = WiFi.status();
-  if (st == WL_CONNECTED) {
-    return true;
-  }
+// ============================================================================
+// WI-FI & CLOUD HTTP POST TELEMETRY
+// ============================================================================
+WiFiClientSecure secureClient;
+unsigned long lastWifiCheck = 0;
+
+void ensureWiFiConnection() {
+  if (WiFi.status() == WL_CONNECTED) return;
 
   unsigned long now = millis();
-  if (now - lastWifiRetryTime >= WIFI_RECONNECT_CADENCE) {
-    lastWifiRetryTime = now;
-    Serial.printf("[WiFi] Re-attempting connection to '%s' (Current status: %s)...\n",
-                  WIFI_SSID, getWiFiStatusName(st));
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  if (now - lastWifiCheck < WIFI_CHECK_INTERVAL) return;
+  lastWifiCheck = now;
+
+  Serial.printf("[WiFi] Connecting to '%s'...", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  int tries = 0;
+  while (WiFi.status() != WL_CONNECTED && tries < 15) {
+    delay(400);
+    Serial.print(F("."));
+    tries++;
   }
-  return false;
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("[WiFi] Connected! IP: %s | RSSI: %d dBm\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  } else {
+    Serial.printf("[WiFi] Not yet connected (Status: %d). Continuing telemetry loop...\n", WiFi.status());
+    if (WiFi.status() == WL_NO_SSID_AVAIL) {
+      Serial.println(F("   -> [HOTSPOT TIP] Ensure mobile hotspot is ON and set to 2.4 GHz band."));
+    }
+  }
 }
 
-/**
- * Transmits telemetry payload every 1000 ms to Render backend.
- * Stays permanently ONLINE on Render and Vercel regardless of sensor state.
- */
-void sendTelemetry(bool hasValidReadings, float tdsVal, float turbVal, float tempVal) {
-  if (!ensureWiFi()) {
-    Serial.printf("[HTTP] Telemetry paused — WiFi status: %s\n", getWiFiStatusName(WiFi.status()));
+void postTelemetryToRender(float tdsVal, float turbVal, bool sensorsOk) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(F("[HTTP] Wi-Fi offline — skipping cloud upload (will retry next tick)."));
     return;
   }
 
-  // Build JSON payload
+  // Construct JSON payload
+  // pH and temperature are intentionally omitted / null (Uno & 2-sensor ESP setup)
   StaticJsonDocument<384> doc;
   doc["device_id"]        = DEVICE_ID;
   doc["source"]           = SOURCE_TAG;
-  doc["firmware_version"] = FIRMWARE_VERSION;
+  doc["firmware_version"] = FIRMWARE_VER;
   doc["uptime"]           = (unsigned long)(millis() / 1000);
   doc["wifi_rssi"]        = WiFi.RSSI();
-  doc["sensor_status"]    = sensorStatus;
+  doc["sensor_status"]    = sensorsOk ? "ok" : "sensor_fault";
 
-  if (hasValidReadings && sensorStatus == "ok") {
-    doc["tds"]         = round(tdsVal * 10.0f) / 10.0f;       // 1 decimal place (ppm)
-    doc["turbidity"]   = round(turbVal * 100.0f) / 100.0f;    // 2 decimal places (NTU)
-    doc["temperature"] = round(tempVal * 10.0f) / 10.0f;    // °C
-    doc["ph"]          = nullptr;                             // 2-sensor setup (neutral fallback on backend)
+  if (sensorsOk) {
+    doc["tds"]       = round(tdsVal * 10.0f) / 10.0f;
+    doc["turbidity"] = round(turbVal * 100.0f) / 100.0f;
   } else {
-    // Sensor fault state: Strictly null values. NEVER FABRICATE DATA.
-    doc["tds"]         = nullptr;
-    doc["turbidity"]   = nullptr;
-    doc["ph"]          = nullptr;
-    doc["temperature"] = nullptr;
+    doc["tds"]       = nullptr;
+    doc["turbidity"] = nullptr;
   }
+  doc["ph"]          = nullptr;
+  doc["temperature"] = nullptr;
 
-  String jsonPayload;
-  serializeJson(doc, jsonPayload);
+  String body;
+  serializeJson(doc, body);
 
-  // Initialize or re-use TLS session
-  if (!isHttpConnected || !httpClient.connected()) {
-    Serial.println(F("[HTTP] Establishing TLS connection to Render..."));
-    secureClient.setInsecure();
-    secureClient.setBufferSizes(1024, 512); // Optimized buffer size for ESP8266 heap
-    secureClient.setTimeout(8000);
-    httpClient.begin(secureClient, BACKEND_URL);
-    httpClient.setTimeout(firstRequest ? HTTP_COLD_START_MS : HTTP_STANDARD_TIMEOUT);
-    httpClient.setReuse(true);
-    isHttpConnected = true;
-  }
-
-  httpClient.addHeader(F("Content-Type"), F("application/json"));
-  httpClient.addHeader(F("User-Agent"),   F("ESP8266-DROPLET/4.3.0"));
-  httpClient.addHeader(F("Accept"),       F("application/json"));
-  httpClient.addHeader(F("Connection"),   F("keep-alive"));
+  secureClient.setInsecure(); // Let's Encrypt TLS validation
+  HTTPClient http;
+  http.begin(secureClient, BACKEND_URL);
+  http.addHeader(F("Content-Type"), F("application/json"));
+  http.addHeader(F("User-Agent"), F("DROPLET-ESP/5.0"));
+  http.setTimeout(8000);
 
   unsigned long t0 = millis();
-  int httpCode = httpClient.POST(jsonPayload);
-  unsigned long durationMs = millis() - t0;
-  firstRequest = false;
+  int code = http.POST(body);
+  unsigned long duration = millis() - t0;
 
-  Serial.printf("[HTTP POST] Code %d (%lums) -> %s\n", httpCode, durationMs, jsonPayload.c_str());
-
-  if (httpCode > 0) {
-    if (httpCode == HTTP_CODE_CREATED || httpCode == HTTP_CODE_OK) {
-      String resp = httpClient.getString();
-      Serial.printf("[HTTP POST] OK (%d bytes, cloud stream active)\n", resp.length());
-    } else {
-      Serial.printf("[HTTP POST] Status %d. Re-cycling connection.\n", httpCode);
-      httpClient.end();
-      isHttpConnected = false;
-    }
+  if (code == 200 || code == 201) {
+    Serial.printf("[HTTP POST %d] OK (%lums) -> Ingested successfully into DROPLET!\n", code, duration);
+  } else if (code > 0) {
+    Serial.printf("[HTTP POST %d] Server response: %s\n", code, http.getString().c_str());
   } else {
-    Serial.printf("[HTTP POST] Error %d: %s. Resetting connection.\n",
-                  httpCode, httpClient.errorToString(httpCode).c_str());
-    httpClient.end();
-    isHttpConnected = false;
+    Serial.printf("[HTTP POST Error] Code: %d (%s)\n", code, http.errorToString(code).c_str());
   }
+  http.end();
 }
 
 // ============================================================================
-// 5. SETUP (INITIALIZATION)
+// SETUP
 // ============================================================================
 void setup() {
   Serial.begin(115200);
   delay(1000);
 
   Serial.println(F("\n========================================================"));
-  Serial.printf("  DROPLET Water Telemetry - NodeMCU ESP8266 (v%s)        \n", FIRMWARE_VERSION);
+  Serial.printf("  DROPLET Water Telemetry — %s (v%s)\n", BOARD_NAME, FIRMWARE_VER);
   Serial.println(F("========================================================"));
-  Serial.printf("[Config] Backend URL: %s\n", BACKEND_URL);
-  Serial.printf("[Config] Device ID  : %s\n", DEVICE_ID);
-  Serial.printf("[Config] Cadence    : %lums\n", SEND_INTERVAL_MS);
+  Serial.printf("  Backend URL : %s\n", BACKEND_URL);
+  Serial.printf("  Device ID   : %s\n", DEVICE_ID);
+  Serial.printf("  TDS Read Pin: GPIO %d (ADC) | Power: GPIO %d\n", PIN_TDS_ADC, PIN_TDS_PWR);
+  Serial.printf("  Turbidity   : GPIO %d (ADC)\n", PIN_TURB_ADC);
+  Serial.println(F("========================================================"));
 
-  // Initialize I2C Bus & Auto-Detect ADS1115 (checks both D2/D1 and D1/D2)
-  runStartupI2CScan();
+  // Configure TDS power gating pin
+  pinMode(PIN_TDS_PWR, OUTPUT);
+  digitalWrite(PIN_TDS_PWR, LOW); // TDS powered OFF when idle
 
-  // Connect to Wi-Fi with generous timeout (30 * 500ms = 15 seconds)
-  Serial.printf("[WiFi] Connecting to '%s' (2.4 GHz required) ", WIFI_SSID);
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // Load EEPROM calibration
+  loadCalibration();
+  showCalibration();
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(F("."));
-    attempts++;
-  }
-  Serial.println();
+  // Connect Wi-Fi
+  ensureWiFiConnection();
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[WiFi] Connected successfully! IP: %s (RSSI: %d dBm)\n",
-                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
-  } else {
-    Serial.printf("[WiFi] Initial connection pending (Status: %s).\n",
-                  getWiFiStatusName(WiFi.status()));
-    if (WiFi.status() == WL_NO_SSID_AVAIL) {
-      Serial.println(F("   -> [HOTSPOT CHECK] ESP8266 only supports 2.4 GHz!"));
-      Serial.println(F("   -> On Samsung: Mobile Hotspot -> Configure -> Band -> Select '2.4 GHz'."));
-      Serial.println(F("   -> On iPhone: Settings -> Personal Hotspot -> Turn ON 'Maximize Compatibility'."));
-    }
-    Serial.println(F("   -> Non-blocking mode active: Main loop will continue connecting in background."));
-  }
+  delay(2000); // Sensor stabilization delay
 }
 
 // ============================================================================
-// 6. MAIN LOOP (NON-BLOCKING 1000 MS FIXED CADENCE)
+// MAIN LOOP
 // ============================================================================
+unsigned long lastReadTime = 0;
+
 void loop() {
+  // 1. Process Serial Monitor calibration commands
+  if (Serial.available()) {
+    handleSerialCommand(Serial.readStringUntil('\n'));
+  }
+
+  // 2. Wi-Fi reconnection monitor (non-blocking)
+  ensureWiFiConnection();
+
+  // 3. Sensor sampling & cloud transmission at fixed cadence
   unsigned long now = millis();
+  if (now - lastReadTime >= INTERVAL_MS) {
+    lastReadTime = now;
 
-  // 1. Non-blocking ADS1115 Reconnection Retry (every 4 seconds if missing)
-  if (!adsFound && (now - lastI2cRetryTime >= I2C_RETRY_INTERVAL_MS)) {
-    lastI2cRetryTime = now;
-    if (probeADS1115Quick()) {
-      Serial.println(F("[ADS1115] Connection re-established! Sensor status switched to 'ok'."));
+    // A. Read Turbidity first (TDS module is completely unpowered to prevent optical/electrolytic interference)
+    float vTurb = readFilteredVolts(PIN_TURB_ADC);
+
+    // B. Power on TDS module, allow RC settling, take filtered samples, power off
+    digitalWrite(PIN_TDS_PWR, HIGH);
+    delay(350); // Settling delay
+    float vTds = readFilteredVolts(PIN_TDS_ADC);
+    digitalWrite(PIN_TDS_PWR, LOW);
+
+    lastVTurb  = vTurb;
+    lastTdsRaw = tdsRawPpm(vTds);
+    float tdsVal = lastTdsRaw * cal.tdsK;
+    float turbVal = turbidityNtu(vTurb);
+
+    bool sensorsOk = true;
+    if (vTds < 0.015f && vTurb < 0.015f) {
+      sensorsOk = false;
+      sensorStatus = "sensor_fault";
     } else {
-      recoverI2CBus(pinSDA, pinSCL);
-    }
-  }
-
-  // 2. Fixed-Rate Telemetry Loop (every 1000 ms)
-  if (now - lastSendTime >= SEND_INTERVAL_MS) {
-    lastSendTime += SEND_INTERVAL_MS;
-    if (now - lastSendTime >= SEND_INTERVAL_MS) {
-      lastSendTime = now;
+      sensorStatus = "ok";
     }
 
-    int16_t rawTds = 0, rawTurb = 0, rawA2 = 0, rawA3 = 0;
-    float vTds = 0.0f, vTurb = 0.0f, vA2 = 0.0f, vA3 = 0.0f;
-    bool readSuccess = true;
-
-    if (adsFound) {
-      bool ok0 = readADSChannel(CHANNEL_TDS, rawTds, vTds);
-      bool ok1 = readADSChannel(CHANNEL_TURBIDITY, rawTurb, vTurb);
-      readADSChannel(CHANNEL_PH_AUX, rawA2, vA2);
-      readADSChannel(CHANNEL_TEMP_AUX, rawA3, vA3);
-
-      if (ok0 && ok1) {
-        sensorStatus = "ok";
-        consecutiveErrors = 0;
-      } else {
-        consecutiveErrors++;
-        sensorStatus = "read_error";
-        readSuccess = false;
-        Serial.printf("[ADS1115 Read Error] Consecutive failures: %d\n", consecutiveErrors);
-        if (consecutiveErrors >= 3) {
-          Serial.println(F("[I2C Recovery] 3 consecutive errors -> recovering bus..."));
-          recoverI2CBus(pinSDA, pinSCL);
-          adsFound = false; // Trigger smart re-probe
-        }
-      }
-    } else {
-      sensorStatus = "ads1115_not_found";
-      readSuccess = false;
-    }
-
-    // Physical Calculations (only if readings are valid)
-    float tdsValue = 0.0f;
-    float turbidityValue = 0.0f;
-
-    if (readSuccess && sensorStatus == "ok") {
-      tdsValue = calculateTDS(vTds, DEFAULT_TEMPERATURE_C);
-      turbidityValue = calculateTurbidity(vTurb);
-    }
-
-    // Diagnostic Serial Output
+    // Diagnostics print to Serial Monitor
     Serial.println(F("--------------------------------------------------"));
-    Serial.printf("[Telemetry Tick] Status: %s | WiFi RSSI: %d dBm | Uptime: %lus\n",
-                  sensorStatus.c_str(), WiFi.RSSI(), (unsigned long)(millis() / 1000));
+    Serial.printf("[Telemetry] Uptime: %lus | WiFi RSSI: %d dBm | Status: %s\n",
+                  (unsigned long)(millis() / 1000), WiFi.RSSI(), sensorStatus.c_str());
+    Serial.printf("  TDS       : %0.3f V -> %0.1f ppm (raw: %0.1f ppm)\n", vTds, tdsVal, lastTdsRaw);
+    Serial.printf("  Turbidity : %0.3f V -> %0.1f NTU\n", vTurb, turbVal);
 
-    if (sensorStatus == "ok") {
-      Serial.printf("[Sensors OK] TDS (A0): %5d (%0.3fV) -> %0.1f ppm  |  Turbidity (A1): %5d (%0.3fV) -> %0.2f NTU\n",
-                    rawTds, vTds, tdsValue, rawTurb, vTurb, turbidityValue);
-      if (vTds < 0.015f) {
-        Serial.println(F("   -> [TDS TIP] Probe in air reads 0 ppm. Submerge in water to test!"));
-      }
-      if (vTurb < 0.05f) {
-        Serial.println(F("   -> [TURBIDITY TIP] 0.00 NTU: Verify blue adapter switch is on 'A' (Analog)!"));
-      }
-    } else {
-      Serial.printf("[Sensor State] %s -> Streaming fault telemetry (Dashboard remains ONLINE)\n",
-                    sensorStatus.c_str());
+    if (vTds < 0.02f) {
+      Serial.println(F("   -> [TDS TIP] Probe in air reads 0 ppm. Submerge in water to measure!"));
+    }
+    if (vTurb < 0.05f) {
+      Serial.println(F("   -> [TURB TIP] 0.00V detected. Check wiring and ensure adapter switch is set to 'A' (Analog)!"));
     }
 
-    // Send Telemetry to Render Backend
-    sendTelemetry(readSuccess, tdsValue, turbidityValue, DEFAULT_TEMPERATURE_C);
+    // C. Forward to DROPLET cloud API
+    postTelemetryToRender(tdsVal, turbVal, sensorsOk);
   }
-
-  yield(); // Keep ESP8266 background Wi-Fi routines serviced
 }
