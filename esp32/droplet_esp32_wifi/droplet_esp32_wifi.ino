@@ -76,7 +76,7 @@
 // ============================================================================
 // Wi-Fi Credentials (supports 2.4 GHz Mobile Hotspots and Home Routers)
 const char* WIFI_SSID       = "Vgp";
-const char* WIFI_PASSWORD   = "p";
+const char* WIFI_PASSWORD   = "guru2006";
 
 // DROPLET Cloud API Endpoint
 const char* BACKEND_URL     = "https://droplet-api-byl8.onrender.com/api/readings";
