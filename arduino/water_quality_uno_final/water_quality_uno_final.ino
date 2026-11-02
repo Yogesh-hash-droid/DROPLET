@@ -2,8 +2,8 @@
   Water Quality Monitor - Arduino Uno + TDS + Turbidity (no ADS1115)
   Educational prototype. Not certified water-safety equipment.
 
-  WIRING
-    TDS:       red (+) -> Uno D7 (powered only while reading), black (-) -> GND,
+  WIRING (Your Setup):
+    TDS:       red (+) -> Uno 5V (or D7 for optional power gating), black (-) -> GND,
                yellow (A) -> Uno A0
     Turbidity: V -> Uno 5V, G -> GND, signal -> Uno A1
 
