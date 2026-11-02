@@ -180,6 +180,8 @@ def create_reading_endpoint(
         background_tasks.add_task(
             publish_sync,
             {
+                "id": reading.id,
+                "reading_id": reading.id,
                 "device_id": reading.device_id,
                 "tds": reading.tds,
                 "turbidity": reading.turbidity,
@@ -192,11 +194,15 @@ def create_reading_endpoint(
                 "source": reading.source.value,
                 "timestamp": reading.timestamp.isoformat() if reading.timestamp else None,
                 "quality_score": quality_score,
+                "score_method": reading.score_method,
                 "screening_status": screening_status,
+                "parameter_rule_check": parameter_rule_check.model_dump() if parameter_rule_check else None,
                 "safety_status": safety_status,
+                "warning_message": warning_message,
                 "prediction": ml_res.prediction if ml_res else None,
                 "confidence": ml_res.confidence if ml_res else None,
                 "ml_status": ml_status,
+                "ml_status_reason": ml_status_reason,
             }
         )
         return ingestion_response

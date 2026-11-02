@@ -82,14 +82,20 @@ def detect_serial_port() -> str:
 
     log.info("Detected serial ports:")
     priority_port = None
+    fallback_port = None
     for p in ports:
         log.info("  %s — %s", p.device, p.description)
         desc = (p.description or "").lower()
-        if any(kw in desc for kw in ("arduino", "ch340", "cp210", "ftdi", "usb-serial", "uart")):
+        # Ignore Bluetooth virtual COM ports
+        if "bluetooth" in desc:
+            continue
+        if any(kw in desc for kw in ("arduino", "ch340", "cp210", "ftdi", "usb", "serial", "uart")):
             if priority_port is None:
                 priority_port = p.device
+        elif fallback_port is None:
+            fallback_port = p.device
 
-    chosen = priority_port or ports[0].device
+    chosen = priority_port or fallback_port or (ports[0].device if ports else "")
     log.info("Auto-selected: %s", chosen)
     return chosen
 
@@ -251,8 +257,15 @@ def run_bridge(port: str):
             log.info("Summary: %d posted, %d skipped.", total_posted, total_skipped)
             break
         except serial.SerialException as exc:
-            log.error("[SERIAL] %s — retrying in 5s…", exc)
-            time.sleep(5.0)
+            msg = str(exc)
+            if "PermissionError" in msg or "Access is denied" in msg:
+                log.error("[PORT BUSY] %s is currently locked by another program!", port)
+                log.error("  -> If the Arduino IDE Serial Monitor is open, please CLOSE IT.")
+                log.error("  -> Windows only allows one program to use %s at a time.", port)
+                log.error("  -> Retrying in 4s (will connect automatically once Serial Monitor is closed)...")
+            else:
+                log.error("[SERIAL] %s — retrying in 5s…", exc)
+            time.sleep(4.0)
         finally:
             if ser and ser.is_open:
                 try:

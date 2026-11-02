@@ -28,19 +28,36 @@ export default function App() {
 
   useEffect(() => {
     if (sseData) {
-      // SSE pushed a new reading — use it immediately
-      setLatest(prev => ({ ...prev, ...sseData }))
+      // SSE pushed a new reading — update immediately
+      setLatest(prev => {
+        const prevId = prev?.id || prev?.reading_id || 0
+        const sseId = sseData?.id || sseData?.reading_id || 0
+        if (!prev || sseId >= prevId) {
+          return { ...prev, ...sseData }
+        }
+        return prev
+      })
       setLatestError(null)
       setLatestUpdatedAt(new Date().toISOString())
     }
   }, [sseData])
 
   useEffect(() => {
-    // Polled data acts as baseline / first-load fill
-    if (polledLatest.data && !sseData) {
-      setLatest(polledLatest.data)
-      setLatestError(polledLatest.error)
-      setLatestUpdatedAt(polledLatest.updatedAt)
+    // Polled data fallback: always updates if newer or equal (never blocked by SSE)
+    if (polledLatest.data) {
+      setLatest(prev => {
+        const prevId = prev?.id || prev?.reading_id || 0
+        const polledId = polledLatest.data?.id || polledLatest.data?.reading_id || 0
+        const prevTime = prev?.timestamp ? new Date(prev.timestamp).getTime() : 0
+        const polledTime = polledLatest.data?.timestamp ? new Date(polledLatest.data.timestamp).getTime() : 0
+
+        if (!prev || polledId >= prevId || polledTime >= prevTime) {
+          return polledLatest.data
+        }
+        return prev
+      })
+      setLatestError(null)
+      setLatestUpdatedAt(polledLatest.updatedAt || new Date().toISOString())
     } else if (polledLatest.error && !latest) {
       setLatestError(polledLatest.error)
     }
